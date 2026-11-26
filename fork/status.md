@@ -15,7 +15,7 @@
 | 分支 | `lite` |
 | 应用名称 | `Readest lite`；仓库 `dinayuil/readest-lite` |
 | 当前基线 | 官方 `v0.12.26`（`cefdc9edd`，2026-11-26 发布） |
-| 合并提交 | `Merge tag 'v0.12.26' into lite` |
+| 合并提交 | `3ffa799df` — `Merge tag 'v0.12.26' into lite` |
 | 版本号 | `apps/readest-app/package.json` = `0.12.26` |
 | fork 开关 | `ACCOUNTLESS_BUILD = true`（`apps/readest-app/src/utils/access.ts`） |
 | 远端 | `origin` = `dinayuil/readest-lite`；`upstream` = `readest/readest` |
@@ -29,6 +29,18 @@ grep -rn ACCOUNTLESS_BUILD apps/readest-app/src
 ```
 
 改完或合并后按搜索结果逐处复核。
+
+## GitHub Release 更新提示（2026-11-26）
+
+- Windows 和 Android 客户端检查 `dinayuil/readest-lite` 的最新 GitHub Release。
+  启动检查沿用设置和 24 小时间隔，「关于」窗口可随时手动检查。
+- 发布构建内置工作流构建号，可识别版本号相同时更新的 Release。当前平台的产物上传后，
+  弹窗可打开该 Release 页面供用户下载。未内置构建号的本地构建按版本号比较。
+- 已安装的旧版需从 GitHub 手动下载首个带更新提示的版本。
+- 验证了公开 Release `v0.12.20-lite.9` 的 API 响应与下载页。相关 178 项测试、类型和格式检查通过，
+  Next.js 生产导出重试通过，确认构建号已编入更新检查的客户端代码。
+- `v0.12.20` 基线时出现的跨设备统计测试失败已随 `v0.12.26` 合并解决。更新提示改动在新基线上通过全量测试。
+- [ ] 在发布后的 Windows 安装版、便携版和 Android APK 上实测更新弹窗与浏览器跳转。
 
 ## 应用与仓库改名（2026-11-12）
 
@@ -59,9 +71,19 @@ grep -rn ACCOUNTLESS_BUILD apps/readest-app/src
 ## 本轮合并记录：v0.12.26
 
 - 合并官方正式发布标签 `v0.12.26`（`cefdc9edd`），包含上游 321 个提交并解决 8 个文件冲突。
-- 保留免登录书籍上传和第三方同步入口。第三方同步设置同时保留 fork 阅读统计和上游缓存选项。
+- 保留免登录书籍上传和第三方同步入口。第三方同步设置同时保留 fork 阅读统计和上游自定义字体同步选项。
 - 在现有统计数据库中保留文件分块同步迁移，追加上游阅读速度迁移。阅读速度记录、统计合并和删除复用同一写入队列。
 - `foliate-js` 更新至 `4282f94c6`，`tauri-plugin-webview-upgrade` 更新至 `5b8b8c88f`。根目录 `pnpm install --frozen-lockfile` 通过。
+- 类型、lint 和格式检查通过。定向测试覆盖更新提示与 fork 契约（192 项）、阅读统计（85 项）、
+  文件同步（61 项）及账户和书架入口（11 项）。旧基线的跨设备阅读统计测试已在本轮合并中修复。
+- `12fae745d` 调整了上游账号、统计界面和 Windows 测试，保留官方模式断言并覆盖免账号入口。
+  对应的 74 项定向测试通过。最终全量 Vitest 17,920 项通过、37 项跳过（1,455 个文件通过）。
+- 合并后重新验证了 GitHub Release 更新提示。`0.12.26` 的 Next.js 生产导出通过，
+  已验证构建号进入产物。Rust 格式检查通过，Lua 检查因本机缺少 LuaJIT 跳过。
+- Windows 上的严格 Clippy 检查被缩略图扩展的 `ptr_arg` 和
+  `needless_borrows_for_generic_args` 拦截，两处代码在合并前已存在。
+- Windows Rust 单测 215 项通过、2 项失败。两项来自合并前已有的目录扫描路径分隔符、
+  文件范围读取的 Unix 绝对路径断言。
 
 ## 历史合并记录：v0.12.20
 
@@ -170,10 +192,6 @@ library refresh / ABS offline）全部通过。
       `deepl`。翻译行为和选择器显示已经由同步解析修正，但设置文件里仍写着
       不可用的值。彻底做法是在 `appService.runMigrations` 加一条 fork 迁移
       （版本闸门 `< 20260919`），把不可用的值改写为首个可用 provider。优先级低。
-- [ ] **（可选）隐藏手动更新入口**：源码层 `APP_UPDATES_ENABLED` 已让
-      `checkForAppUpdates()` / `checkAppReleaseNotes()` 全部早返回；“关于”窗口
-      的按钮和设置里的自动更新/nightly 开关仍在。要彻底隐藏需改
-      `AboutWindow.tsx` 与 `ControlPanel.tsx`（记得补 `@/utils/access` 的 mock）。
 - [ ] **Google Drive / OneDrive OAuth**：如要使用，需要自己申请 OAuth 应用并用
       `NEXT_PUBLIC_GOOGLE_CLIENT_ID` / `NEXT_PUBLIC_MICROSOFT_CLIENT_ID` 替换；
       桌面端还要同步改 `src-tauri/tauri.conf.json` 的反向 DNS 回调 scheme。
@@ -187,8 +205,7 @@ library refresh / ABS offline）全部通过。
   崩溃上报是独立通道，未改动。
 - 官方账号页 `/auth`、`/user`、`/send` 等页面代码保留，只是没有任何入口能走到；
   这样上游合并冲突面最小。
-- 更新检查在源码层关闭（桌面 Tauri updater、Android 手工请求、nightly 通道）；
-  构建配置里的 `plugins.updater.endpoints: []` 只作为桌面侧第二道防线。
+- Lite 通过 GitHub Release 页面提供手动下载与安装，源码中关闭官方稳定版和 nightly 更新渠道。
 - Android 使用 fork 自己的 keystore；换钥匙会导致已安装包无法覆盖升级。
 - 本 fork 只跟踪官方**发布 tag**，不跟 `upstream/main`；发布版之间的提交不保证
   已合并。

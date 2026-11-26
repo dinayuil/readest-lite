@@ -30,6 +30,13 @@ vi.mock('@/context/EnvContext', () => ({
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => (s: string) => s,
 }));
+const fork = vi.hoisted(() => ({ accountless: false }));
+vi.mock('@/utils/access', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/access')>()),
+  get ACCOUNTLESS_BUILD() {
+    return fork.accountless;
+  },
+}));
 
 const readerState = {
   bookKeys: [],
@@ -69,6 +76,7 @@ const nightlySwitch = () =>
 const savedSettings = (): SystemSettings => JSON.parse(localStorage.getItem(storageKey)!);
 
 beforeEach(() => {
+  fork.accountless = false;
   appService.hasUpdater = true;
   platform.tauri = false;
   useSettingsStore.setState({
@@ -89,6 +97,13 @@ afterEach(() => {
 });
 
 describe('Behavior update settings reset', () => {
+  it('offers startup checks for Readest lite with a single release channel', () => {
+    fork.accountless = true;
+    render(<ControlPanel bookKey='' onRegisterReset={() => {}} />);
+    expect(autoCheckSwitch().checked).toBe(false);
+    expect(screen.queryByRole('checkbox', { name: /^Nightly Builds/ })).toBeNull();
+  });
+
   it('restores the update defaults in the controls and persisted settings', async () => {
     const registerReset = vi.fn<(reset: () => void) => void>();
     const panel = render(<ControlPanel bookKey='' onRegisterReset={registerReset} />);

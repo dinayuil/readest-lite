@@ -7,6 +7,8 @@ const mockCheck = vi.fn();
 const mockOsType = vi.fn();
 const mockOsArch = vi.fn();
 const mockTauriFetch = vi.fn();
+const mockConfirm = vi.fn();
+const mockOpenExternalUrl = vi.fn();
 
 vi.mock('@tauri-apps/plugin-updater', () => ({
   check: (...args: unknown[]) => mockCheck(...args),
@@ -19,6 +21,14 @@ vi.mock('@tauri-apps/plugin-os', () => ({
 
 vi.mock('@tauri-apps/plugin-http', () => ({
   fetch: (...args: unknown[]) => mockTauriFetch(...args),
+}));
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  confirm: (...args: unknown[]) => mockConfirm(...args),
+}));
+
+vi.mock('@/utils/open', () => ({
+  openExternalUrl: (...args: unknown[]) => mockOpenExternalUrl(...args),
 }));
 
 // WebviewWindow is used with `new`, so the mock must be a constructor
@@ -61,14 +71,12 @@ vi.mock('@/services/constants', () => ({
   READEST_NIGHTLY_UPDATER_FILE: 'https://example.com/nightly/latest.json',
 }));
 
-// Fork switch (utils/access). Mocked mutable so the upstream cases below still
-// exercise the real decision logic (flag ON), while the last block asserts this
-// build's OFF path. Mocking the module also keeps supabase out of this file.
+// Exercise both the upstream and fork paths without loading Supabase.
 const { mockAppUpdatesEnabled } = vi.hoisted(() => ({
   mockAppUpdatesEnabled: { value: true },
 }));
 vi.mock('@/utils/access', () => ({
-  get APP_UPDATES_ENABLED() {
+  get UPSTREAM_APP_UPDATES_ENABLED() {
     return mockAppUpdatesEnabled.value;
   },
 }));
@@ -101,6 +109,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 // ── Helper to create a dummy TranslationFunc ─────────────────────
@@ -485,48 +495,123 @@ describe('updater', () => {
     });
   });
 
-  // ── fork: this build has no update channel of its own ──────────
-  describe('APP_UPDATES_ENABLED = false (this fork)', () => {
+  describe('Readest lite release checks', () => {
+    const releaseEndpoint = 'https://api.github.com/repos/dinayuil/readest-lite/releases/latest';
+    const releasePage = 'https://github.com/dinayuil/readest-lite/releases/tag/v1.0.0-lite.10';
+    const windowsAsset = 'Readest-lite-1.0.0-x64-setup.exe';
+    const androidAsset = 'Readest-lite-1.0.0-universal-release.apk';
+    const mockRelease = (tag: string, asset = windowsAsset, state = 'uploaded') => {
+      mockTauriFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ tag_name: tag, assets: [{ name: asset, state }] }),
+      });
+    };
+
     beforeEach(() => {
       mockAppUpdatesEnabled.value = false;
+      mockIsTauriAppPlatform = true;
+      mockOsType.mockReturnValue('windows');
+      mockConfirm.mockResolvedValue(false);
+      vi.stubEnv('NEXT_PUBLIC_READEST_LITE_BUILD_NUMBER', '9');
     });
 
-    test('Android never contacts the official update host', async () => {
-      mockOsType.mockReturnValue('android');
-      // A manual check plus a long-past interval used to reach the network.
-      localStorage.setItem('lastAppUpdateCheck', '0');
+    test.each([
+      ['windows', windowsAsset, true],
+      ['android', androidAsset, false],
+    ])('prompts on %s for a higher build with the same app version', async (os, asset, accept) => {
+      mockOsType.mockReturnValue(os);
+      mockRelease('v1.0.0-lite.10', asset);
+      mockConfirm.mockResolvedValue(accept);
 
-      await expect(checkForAppUpdates(dummyTranslate, false)).resolves.toBe(false);
+      await expect(checkForAppUpdates(dummyTranslate, true, 'nightly')).resolves.toBe(true);
 
-      expect(mockTauriFetch).not.toHaveBeenCalled();
+      expect(mockTauriFetch).toHaveBeenCalledExactlyOnceWith(
+        releaseEndpoint,
+        expect.objectContaining({
+          headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Readest-lite' },
+        }),
+      );
+      expect(mockConfirm).toHaveBeenCalledOnce();
+      if (accept) {
+        expect(mockOpenExternalUrl).toHaveBeenCalledExactlyOnceWith(releasePage);
+      } else {
+        expect(mockOpenExternalUrl).not.toHaveBeenCalled();
+      }
+      expect(mockCheck).not.toHaveBeenCalled();
       expect(mockSetUpdaterWindowVisible).not.toHaveBeenCalled();
     });
 
-    test('desktop never calls the updater plugin', async () => {
-      mockOsType.mockReturnValue('macos');
-      mockCheck.mockResolvedValue({ version: '2.0.0' });
+    test.each([
+      'v1.0.0-lite.9',
+      'v1.0.0-lite.8',
+      'v0.9.0-lite.99',
+      'v2.0.0',
+    ])('ignores an installed, older, or unrelated release (%s)', async (tag) => {
+      mockRelease(tag);
+      await expect(checkForAppUpdates(dummyTranslate, false)).resolves.toBe(false);
+      expect(mockConfirm).not.toHaveBeenCalled();
+    });
 
+    test('uses the app version for locally built clients without a build number', async () => {
+      vi.stubEnv('NEXT_PUBLIC_READEST_LITE_BUILD_NUMBER', undefined);
+      mockRelease('v1.0.0-lite.10');
       await expect(checkForAppUpdates(dummyTranslate, false)).resolves.toBe(false);
 
-      expect(mockCheck).not.toHaveBeenCalled();
-      expect(MockWebviewWindowLastArgs).toHaveLength(0);
+      mockRelease('v1.1.0-lite.2', 'Readest-lite-1.1.0-x64-setup.exe');
+      await expect(checkForAppUpdates(dummyTranslate, false)).resolves.toBe(true);
     });
 
-    test('the nightly channel does not read its manifests either', async () => {
-      mockOsType.mockReturnValue('android');
-      mockOsArch.mockReturnValue('aarch64');
+    test.each([
+      [androidAsset, 'uploaded'],
+      [windowsAsset, 'new'],
+    ])('waits for an uploaded Windows asset (%s, %s)', async (asset, state) => {
+      mockRelease('v1.0.0-lite.10', asset, state);
+      await expect(checkForAppUpdates(dummyTranslate, false)).resolves.toBe(false);
+      expect(mockConfirm).not.toHaveBeenCalled();
+    });
 
-      await expect(checkForAppUpdates(dummyTranslate, false, 'nightly')).resolves.toBe(false);
+    test('uses the startup check interval and allows a manual recheck', async () => {
+      mockRelease('v1.0.0-lite.10');
+      await expect(checkForAppUpdates(dummyTranslate)).resolves.toBe(true);
+      await expect(checkForAppUpdates(dummyTranslate)).resolves.toBe(false);
+      await expect(checkForAppUpdates(dummyTranslate, false)).resolves.toBe(true);
+      expect(mockTauriFetch).toHaveBeenCalledTimes(2);
+    });
 
+    test('shows one prompt when startup and manual checks overlap', async () => {
+      mockRelease('v1.0.0-lite.10');
+      await expect(
+        Promise.all([
+          checkForAppUpdates(dummyTranslate),
+          checkForAppUpdates(dummyTranslate, false),
+        ]),
+      ).resolves.toEqual([true, true]);
+      expect(mockTauriFetch).toHaveBeenCalledOnce();
+      expect(mockConfirm).toHaveBeenCalledOnce();
+    });
+
+    test('reports a failed check only when it was requested manually', async () => {
+      mockTauriFetch.mockRejectedValue(new Error('offline'));
+      await expect(checkForAppUpdates(dummyTranslate)).resolves.toBe(false);
+      await expect(checkForAppUpdates(dummyTranslate, false)).rejects.toThrow('offline');
+      expect(mockConfirm).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      [true, 'macos'],
+      [false, 'windows'],
+    ])('skips unsupported clients (native: %s, OS: %s)', async (native, os) => {
+      mockIsTauriAppPlatform = native;
+      mockOsType.mockReturnValue(os);
+      await expect(checkForAppUpdates(dummyTranslate, false)).resolves.toBe(false);
       expect(mockTauriFetch).not.toHaveBeenCalled();
+      expect(mockCheck).not.toHaveBeenCalled();
     });
 
-    test('no check timestamp is written, so nothing is left polling', async () => {
-      mockOsType.mockReturnValue('android');
-
-      await checkForAppUpdates(dummyTranslate, true);
-
-      expect(localStorage.getItem('lastAppUpdateCheck')).toBeNull();
+    test('reports HTTP failures from GitHub on a manual check', async () => {
+      mockTauriFetch.mockResolvedValue({ ok: false, status: 403 });
+      await expect(checkForAppUpdates(dummyTranslate, false)).rejects.toThrow('403');
+      expect(mockConfirm).not.toHaveBeenCalled();
     });
 
     test('release notes never fetch the official changelog', async () => {

@@ -1,5 +1,6 @@
 import semver from 'semver';
 import { check } from '@tauri-apps/plugin-updater';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import { type as osType, arch as osArch } from '@tauri-apps/plugin-os';
 import { fetch } from '@tauri-apps/plugin-http';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -8,11 +9,8 @@ import { TranslationFunc } from '@/hooks/useTranslation';
 import { setUpdaterWindowVisible } from '@/components/UpdaterWindow';
 import { isTauriAppPlatform } from '@/services/environment';
 import { getAppVersion, isUpdateNewer } from '@/utils/version';
-// See APP_UPDATES_ENABLED: this build has no update channel of its own, and an
-// upstream release cannot install over it (own signing key), so nothing here
-// may contact download.readest.com. Guarding the two entry points also covers
-// the nightly channel's manifest fetches, which are reached only from here.
-import { APP_UPDATES_ENABLED } from '@/utils/access';
+import { UPSTREAM_APP_UPDATES_ENABLED } from '@/utils/access';
+import { openExternalUrl } from '@/utils/open';
 import {
   CHECK_UPDATE_INTERVAL_SEC,
   READEST_CHANGELOG_FILE,
@@ -21,6 +19,54 @@ import {
 } from '@/services/constants';
 
 const LAST_CHECK_KEY = 'lastAppUpdateCheck';
+const LITE_REPO = 'dinayuil/readest-lite';
+let liteUpdateCheck: Promise<boolean> | undefined;
+
+const checkForLiteUpdate = async (_: TranslationFunc, platform: 'windows' | 'android') => {
+  const response = await fetch(`https://api.github.com/repos/${LITE_REPO}/releases/latest`, {
+    connectTimeout: 5000,
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Readest-lite' },
+  });
+  if (!response.ok) throw new Error(`Readest lite release check failed (${response.status})`);
+
+  const release = (await response.json()) as {
+    tag_name?: string;
+    assets?: { name: string; state: string }[];
+  };
+  const tag = release.tag_name;
+  if (typeof tag !== 'string') return false;
+  const [, version, build] = /^v(\d+\.\d+\.\d+)-lite\.([1-9]\d*)$/.exec(tag) ?? [];
+  if (!version || !semver.valid(version)) return false;
+
+  const versionComparison = semver.compare(version, getAppVersion());
+  const installedBuild = Number(process.env['NEXT_PUBLIC_READEST_LITE_BUILD_NUMBER']);
+  const releaseBuild = Number(build);
+  const newerBuild =
+    installedBuild > 0 &&
+    Number.isSafeInteger(installedBuild) &&
+    Number.isSafeInteger(releaseBuild) &&
+    releaseBuild > installedBuild;
+  if (versionComparison < 0 || (versionComparison === 0 && !newerBuild)) return false;
+
+  const assetSuffix = platform === 'android' ? '-release.apk' : '.exe';
+  if (
+    !release.assets?.some(({ name, state }) => state === 'uploaded' && name.endsWith(assetSuffix))
+  ) {
+    return false;
+  }
+
+  const versionLabel = _('Version {{version}}', { version: tag.slice(1) });
+  const openRelease = await confirm(
+    `${_('A new version of Readest is available!')}\n${versionLabel}`,
+    {
+      title: _('Software Update'),
+      okLabel: _('Open in Browser'),
+      cancelLabel: _('Cancel'),
+    },
+  );
+  if (openRelease) openExternalUrl(`https://github.com/${LITE_REPO}/releases/tag/${tag}`);
+  return true;
+};
 
 const showUpdateWindow = (latestVersion: string, scrollBarStyle: ScrollBarStyle) => {
   const win = new WebviewWindow('updater', {
@@ -154,19 +200,27 @@ export const checkForAppUpdates = async (
   isAutoCheck = true,
   updateChannel: 'stable' | 'nightly' = 'stable',
 ): Promise<boolean> => {
-  // Fork: return before touching the network, and before writing a check
-  // timestamp — there is nothing to poll and no update channels configured.
-  if (!APP_UPDATES_ENABLED) return false;
-  const lastCheck = localStorage.getItem(LAST_CHECK_KEY);
+  const litePlatform = !UPSTREAM_APP_UPDATES_ENABLED && isTauriAppPlatform() ? osType() : null;
+  const isLite = litePlatform === 'windows' || litePlatform === 'android';
+  if (!UPSTREAM_APP_UPDATES_ENABLED && !isLite) return false;
+
+  const lastCheckKey = isLite ? 'lastLiteAppUpdateCheck' : LAST_CHECK_KEY;
+  const lastCheck = localStorage.getItem(lastCheckKey);
   const now = Date.now();
   if (isAutoCheck && lastCheck && now - parseInt(lastCheck, 10) < CHECK_UPDATE_INTERVAL_SEC * 1000)
     return false;
-  localStorage.setItem(LAST_CHECK_KEY, now.toString());
-
-  console.log('Checking for updates', { updateChannel });
-  const OS_TYPE = osType();
+  localStorage.setItem(lastCheckKey, now.toString());
 
   try {
+    if (isLite) {
+      liteUpdateCheck ??= checkForLiteUpdate(_, litePlatform).finally(() => {
+        liteUpdateCheck = undefined;
+      });
+      return await liteUpdateCheck;
+    }
+
+    console.log('Checking for updates', { updateChannel });
+    const OS_TYPE = osType();
     if (updateChannel === 'nightly') {
       const platformKey = getNightlyPlatformKey(
         OS_TYPE,
@@ -232,9 +286,7 @@ export const getLastShownReleaseNotesVersion = () => {
 };
 
 export const checkAppReleaseNotes = async (isAutoCheck = true) => {
-  // Fork: same reason as checkForAppUpdates — the changelog lives on the same
-  // official host, and it documents releases this build cannot install.
-  if (!APP_UPDATES_ENABLED) return false;
+  if (!UPSTREAM_APP_UPDATES_ENABLED) return false;
   const currentVersion = getAppVersion();
   const lastShownVersion = getLastShownReleaseNotesVersion();
   if ((lastShownVersion && semver.gt(currentVersion, lastShownVersion)) || !isAutoCheck) {

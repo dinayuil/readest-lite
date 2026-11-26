@@ -57,15 +57,15 @@
 | `Readest-lite-<版本>-<arch>-setup.exe` | NSIS 安装包 |
 | `Readest-lite-<版本>-<arch>-portable.exe` | 单文件便携版，免安装 |
 
-- **未签名**：构建时现场生成 `src-tauri/tauri.fork-unsigned.conf.json`（只含
-  `{"bundle":{"createUpdaterArtifacts":false}}`，由 `--config` 合并进主配置），
+- **未签名**：NSIS 构建时现场生成 `src-tauri/tauri.fork.conf.json`（经 `--config`
+  关闭 `bundle.createUpdaterArtifacts` 和 Tauri updater 的官方端点），
   所以不需要 `TAURI_SIGNING_PRIVATE_KEY`。代价是首次运行有 SmartScreen 警告，
   点“仍要运行”即可。
 - 便携版是**第二次构建**（同一个应用，只是 `NEXT_PUBLIC_PORTABLE_APP=true`）。
   它会覆盖掉安装包，所以工作流先把安装包拷出来、再构建便携版。
-- **更新检查已关**：源码层由 `APP_UPDATES_ENABLED` 关闭；构建用的
-  `tauri.fork.conf.json` 另外把 `plugins.updater.endpoints` 覆盖为 `[]`
-  （桌面侧第二道防线；对 Android 无效，别指望它）。
+- `lite` 分支发布用的安装包、便携版和 Android APK 都编入
+  `NEXT_PUBLIC_READEST_LITE_BUILD_NUMBER`，取值与 Release 标签里的 `GITHUB_RUN_NUMBER` 一致。
+  这个构建号用于识别同一版本号下的更新。用户从 GitHub Release 页面下载并安装。
 
 ## 4. Android 产物
 

@@ -19,10 +19,8 @@
 #     bigger file, signed by Gradle's per-runner debug key. With no secrets set,
 #     `release` is refused rather than shipping an uninstallable unsigned APK.
 #
-# The same config clears `plugins.updater.endpoints`. The base config points them
-# at the OFFICIAL releases, so a client built here would otherwise offer to
-# "update" itself INTO the official build and discard this fork's changes. See
-# fork/status.md.
+# The same config clears `plugins.updater.endpoints`. Lite checks GitHub Releases
+# in the app and sends the user to the release page to download the build.
 #
 # This is a new file, so an upstream merge never conflicts with it.
 name: Fork Build (Windows + Android)
@@ -69,6 +67,10 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # Baked into both clients by Next.js. Match the build number in the release tag.
+  NEXT_PUBLIC_READEST_LITE_BUILD_NUMBER: ${{ github.event_name == 'push' && github.ref == 'refs/heads/lite' && github.run_number || '' }}
 
 # A newer push supersedes an in-flight build of the same ref; otherwise two
 # ~50-minute runs would race for the same artifacts.
@@ -129,13 +131,7 @@ jobs:
       # Two overrides, both for this fork:
       #   * createUpdaterArtifacts=false drops the updater signatures, so the
       #     build needs no TAURI_SIGNING_PRIVATE_KEY.
-      #   * plugins.updater.endpoints=[] removes the OFFICIAL release endpoints
-      #     the base config points at. Without this the built client would offer
-      #     to "update" itself into the official build, discarding the fork. The
-      #     check now fails immediately (the plugin's EmptyEndpoints error) and
-      #     the app swallows it: `checkForAppUpdates` treats a failed auto-check
-      #     as "no update" (helpers/updater.ts), which is its documented
-      #     offline/unreachable-host path.
+      #   * plugins.updater.endpoints=[] removes the official installer endpoints.
       - name: write the fork bundle-config override
         shell: bash
         run: |

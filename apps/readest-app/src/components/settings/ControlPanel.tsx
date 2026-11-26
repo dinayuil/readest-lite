@@ -897,13 +897,15 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
             checked={isAutoCheckUpdates}
             onChange={toggleAutoCheckUpdates}
           />
-          <SettingsSwitchRow
-            label={_('Nightly Builds')}
-            description={isNightlyChannel ? _('Early daily builds') : ''}
-            checked={isNightlyChannel}
-            onChange={toggleNightlyChannel}
-            data-setting-id='settings.control.nightlyChannel'
-          />
+          {!ACCOUNTLESS_BUILD && (
+            <SettingsSwitchRow
+              label={_('Nightly Builds')}
+              description={isNightlyChannel ? _('Early daily builds') : ''}
+              checked={isNightlyChannel}
+              onChange={toggleNightlyChannel}
+              data-setting-id='settings.control.nightlyChannel'
+            />
+          )}
         </BoxedList>
       )}
 

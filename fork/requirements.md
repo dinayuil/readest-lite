@@ -34,7 +34,7 @@
 ```ts
 export const ACCOUNTLESS_BUILD = true; // fork 总开关
 export const CLOUD_SYNC_REQUIRES_PREMIUM = !ACCOUNTLESS_BUILD;
-export const APP_UPDATES_ENABLED = !ACCOUNTLESS_BUILD;
+export const UPSTREAM_APP_UPDATES_ENABLED = !ACCOUNTLESS_BUILD;
 ```
 
 - **恢复官方行为**：把 `ACCOUNTLESS_BUILD` 改成 `false`，所有守卫自动失效。
@@ -51,7 +51,7 @@ export const APP_UPDATES_ENABLED = !ACCOUNTLESS_BUILD;
 
 | 文件 | 改动 |
 | --- | --- |
-| `src/utils/access.ts` | 新增 `ACCOUNTLESS_BUILD`；`CLOUD_SYNC_REQUIRES_PREMIUM`、`APP_UPDATES_ENABLED` 由它派生 |
+| `src/utils/access.ts` | 新增 `ACCOUNTLESS_BUILD`；`CLOUD_SYNC_REQUIRES_PREMIUM`、`UPSTREAM_APP_UPDATES_ENABLED` 由它派生 |
 | `src/__tests__/components/settings/cloudSync.test.ts` | 付费墙断言改为“已解除”；资格语义断言改测 `isCloudSyncInPlan` |
 | `src/__tests__/utils/access-accountless.test.ts`（新增） | 锁定 fork 契约：未登录（plan=`free`）时后端不被暂停 |
 
@@ -133,33 +133,14 @@ provider——而改默认值不会重写用户已有设置，老配置里存的
 遗留（可接受）：`posthog-js` 仍留在 bundle 里（未初始化、不出网）；旧安装的
 localStorage 决策键可能残留（无副作用）；Sentry 崩溃上报是另一条独立通道，未动。
 
-### 3.7 停掉更新检查
+### 3.7 Fork 更新提示
 
-更新检查有两条互不相干的出网路径：
-
-| 路径 | 走哪里 | 由什么配置 |
-| --- | --- | --- |
-| 桌面（Win / macOS / Linux） | Tauri updater 插件 | `src-tauri/tauri.conf.json` 的 `plugins.updater.endpoints` |
-| **Android** | 前端自己 `fetch` | `src/services/constants.ts` 的 `READEST_UPDATER_FILE`（写死常量） |
-| nightly 通道 | 前端自己 `fetch` 两份 manifest | 同上两个常量 |
-
-所以构建时把 `endpoints` 覆盖成 `[]` 只能静音 Windows，Android 完全不看这个
-配置。彻底做法是一处源头开关：`APP_UPDATES_ENABLED = !ACCOUNTLESS_BUILD`，
-`src/helpers/updater.ts` 的 `checkForAppUpdates()`（覆盖桌面/Android/nightly）
-和 `checkAppReleaseNotes()` 在函数入口直接返回 `false`。
-
-为什么不走构建时环境变量（`NEXT_PUBLIC_DISABLE_UPDATER`）：它只把
-`appService.hasUpdater` 置为 false，每个构建目标都要记得设，漏一个就静默失效；
-而且 `app/reader/page.tsx` 里 `hasUpdater === false` 的分支会改去调
-`checkAppReleaseNotes()`，还是打官方服务器。改常量一行，所有平台、所有构建都
-确定生效。
-
-**为什么连官方包也不能“假装更新”**：本 fork 用自己的 keystore 签名，官方 APK
-装不上——Android 会以 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`（签名不一致）直接
-拒绝覆盖安装，最坏情况是把 fork 装好的书库弄丢。
-
-保留（可接受）：设置里的 “Check for updates automatically” 与 nightly 通道开关
-仍在，因为 `hasUpdater` 未改动；点了也没有任何出网行为。
+- Windows 和 Android 共用 `src/helpers/updater.ts`，检查 `dinayuil/readest-lite`
+  的最新 GitHub Release。启动自动检查受设置控制，间隔为 24 小时。「关于」里的手动检查可随时发起。
+- 客户端比较版本号与 `v<版本>-lite.<构建号>` 中的构建号。当前平台的产物上传完成后弹出提示，
+  用户可以在浏览器打开对应 Release 页面并下载。没有内置构建号的本地构建只比较版本号。
+- `UPSTREAM_APP_UPDATES_ENABLED = !ACCOUNTLESS_BUILD` 控制官方稳定版、nightly 和更新日志入口。
+  Lite 设置仅显示启动检查开关，Windows 构建会清空 Tauri updater 的官方端点。
 
 ## 4. 能同步 / 不能同步
 
