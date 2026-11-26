@@ -17,6 +17,10 @@ const saveSettings = vi.fn(async () => {});
 // useEnsureSettingsLoaded reads through this when the store is unhydrated.
 const loadSettings = vi.fn(async () => useSettingsStore.getState().settings);
 
+// FORK (ACCOUNTLESS_BUILD): tests default to the official build; the fork
+// regression block flips this on.
+const fork = vi.hoisted(() => ({ accountless: false }));
+
 vi.mock('@/context/EnvContext', () => ({
   useEnv: () => ({
     envConfig: { getAppService: async () => ({ saveSettings, loadSettings }) },
@@ -32,6 +36,20 @@ vi.mock('@/hooks/useTranslation', () => ({
 vi.mock('@/utils/settingsSync', () => ({
   broadcastGlobalSettings: vi.fn(),
 }));
+
+vi.mock('@/utils/access', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/access')>();
+  return {
+    ...actual,
+    get ACCOUNTLESS_BUILD() {
+      return fork.accountless;
+    },
+    // Official mode keeps the third-party premium paywall these upstream tests
+    // assert; the accountless build ungates it.
+    isCloudSyncAllowed: (plan: UserPlan, customizationPurchased: boolean) =>
+      fork.accountless || actual.isCloudSyncInPlan(plan, customizationPurchased),
+  };
+});
 
 import { SyncCategoriesSection } from '@/app/user/components/SyncCategoriesSection';
 
@@ -58,6 +76,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  fork.accountless = false;
   cleanup();
 });
 
@@ -274,5 +293,33 @@ describe('SyncCategoriesSection', () => {
     const booksLi = row('Books').closest('li')!.textContent;
     expect(booksLi).toContain('Readest Cloud');
     expect(booksLi).not.toContain('Google Drive');
+  });
+});
+
+// FORK (ACCOUNTLESS_BUILD): third-party cloud sync is ungated — the plan is not
+// knowable without an account — so a free plan is never paused and its
+// providers show as active destinations.
+describe('SyncCategoriesSection (accountless build)', () => {
+  test('does not pause Google Drive on a free plan', () => {
+    fork.accountless = true;
+    useSettingsStore.setState({
+      settings: { ...base, readestCloud: { enabled: false }, googleDrive: { enabled: true } },
+    } as never);
+    renderSection('free');
+
+    expect(screen.queryByText(/Paused on Google Drive/)).toBeNull();
+    expect(screen.getByText('Synced to Google Drive')).toBeTruthy();
+    expect(row('Books').closest('li')!.textContent).toContain('Google Drive');
+  });
+
+  test('keeps third-party syncing beside Readest Cloud on a free plan', () => {
+    fork.accountless = true;
+    useSettingsStore.setState({
+      settings: { ...base, readestCloud: { enabled: true }, googleDrive: { enabled: true } },
+    } as never);
+    renderSection('free');
+
+    expect(screen.queryByText(/paused on Google Drive/)).toBeNull();
+    expect(screen.getByText('Synced to Readest Cloud, Google Drive')).toBeTruthy();
   });
 });

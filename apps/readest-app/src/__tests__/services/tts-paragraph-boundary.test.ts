@@ -34,7 +34,7 @@ const flush = async () => {
   // setImmediate, not setTimeout(0): Windows clamps timers to ~15.6ms, so the
   // 20 turns here made a 444-step test take 135s and hit its budget. Both are
   // macrotasks and this pipeline has no timer-phase dependency.
-  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  for (let i = 0; i < 20; i++) await setImmediate();
 };
 
 // The audio carries its sentence's text, so the fake decoder can record which

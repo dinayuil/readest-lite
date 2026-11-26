@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import ReadingStatsDialog, {
+  setReadingStatsDialogVisible,
+} from '@/components/stats/ReadingStatsDialog';
 import type { BookStats } from '@/types/statistics';
 import { eventDispatcher } from '@/utils/event';
 
@@ -24,6 +27,9 @@ vi.mock('@/services/sync/syncCategories', () => ({ isSyncCategoryEnabled: () => 
 vi.mock('@/services/statistics/statsSync', () => ({
   pullStats: sync.pullStats,
   deleteBookStats: sync.deleteBookStats,
+}));
+vi.mock('@/services/statistics/statsFileSyncRunner', () => ({
+  runFileStatsSyncForAllBackends: vi.fn(async () => {}),
 }));
 vi.mock('@/libs/sync', () => ({ SyncClient: class SyncClient {} }));
 vi.mock('@/helpers/settings', () => ({ saveSysSettings: vi.fn() }));
@@ -67,9 +73,6 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 const openBooksPage = async () => {
-  const { default: ReadingStatsDialog, setReadingStatsDialogVisible } = await import(
-    '@/components/stats/ReadingStatsDialog'
-  );
   render(<ReadingStatsDialog />);
   await act(async () => setReadingStatsDialogVisible(true));
   fireEvent.click(await screen.findByRole('button', { name: 'Statistics by Book' }));

@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import ReadingHeatmap from '@/components/stats/ReadingHeatmap';
 import ReadingTimeChart from '@/components/stats/ReadingTimeChart';
+import ReadingStatsDialog, {
+  setReadingStatsDialogVisible,
+} from '@/components/stats/ReadingStatsDialog';
 
 const env = vi.hoisted(() => ({ appService: {}, envConfig: {} }));
 const db = vi.hoisted(() => ({
@@ -203,9 +206,6 @@ describe('ReadingStatsDialog', () => {
     getReadingSpeedTotals: async () => [],
   };
   const openDialog = async () => {
-    const { default: ReadingStatsDialog, setReadingStatsDialogVisible } = await import(
-      '@/components/stats/ReadingStatsDialog'
-    );
     render(<ReadingStatsDialog />);
     await act(async () => setReadingStatsDialogVisible(true));
   };

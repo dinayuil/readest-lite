@@ -36,7 +36,9 @@ const divergedRepo = (prLine: string, mainLine: string) => {
   dirs.push(cwd);
   git(cwd, 'init -q -b main');
   // Every command below must act on this repository and nothing else.
-  expect(git(cwd, 'rev-parse --absolute-git-dir')).toBe(path.join(fs.realpathSync(cwd), '.git'));
+  expect(path.normalize(git(cwd, 'rev-parse --absolute-git-dir'))).toBe(
+    path.join(fs.realpathSync(cwd), '.git'),
+  );
   git(cwd, 'config user.email test@example.com');
   git(cwd, 'config user.name Test');
   git(cwd, 'config commit.gpgsign false');

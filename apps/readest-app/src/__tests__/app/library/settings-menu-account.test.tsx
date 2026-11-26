@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => ({
   setIsDropdownOpen: vi.fn(),
 }));
 
+// FORK (ACCOUNTLESS_BUILD): tests default to the official build so the upstream
+// assertions keep running as written; the fork regression test flips this on.
+const fork = vi.hoisted(() => ({ accountless: false }));
+
 vi.mock('@/hooks/useAppRouter', () => ({ useAppRouter: () => mocks.router }));
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => (key: string) => key }));
 vi.mock('@/hooks/useResponsiveSize', () => ({ useResponsiveSize: (size: number) => size }));
@@ -66,6 +70,12 @@ vi.mock('@/utils/nav', () => ({
   navigateToLogin: vi.fn(),
   navigateToProfile: mocks.navigateToProfile,
 }));
+vi.mock('@/utils/access', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/access')>()),
+  get ACCOUNTLESS_BUILD() {
+    return fork.accountless;
+  },
+}));
 vi.mock('@/services/environment', () => ({
   isTauriAppPlatform: () => false,
   isWebAppPlatform: () => true,
@@ -106,6 +116,7 @@ vi.mock('@/components/Quota', () => ({
 }));
 
 afterEach(() => {
+  fork.accountless = false;
   cleanup();
   vi.clearAllMocks();
 });
@@ -141,4 +152,19 @@ it('drops Data Sync from Advanced Settings, now Sync Settings under Account', ()
 
   expect(screen.getByText('Advanced Settings')).toBeTruthy();
   expect(screen.queryByText('Data Sync')).toBeNull();
+});
+
+// FORK (ACCOUNTLESS_BUILD): this build has no account and this menu has no
+// entry to one, so the whole account area — header, quota rows, Account /
+// Sign Out / Sync Settings, and the signed-out Sign In — is dropped. The rest
+// of the menu is account-independent and stays.
+it('drops the account area in the accountless build', () => {
+  fork.accountless = true;
+  render(<SettingsMenu onPullLibrary={vi.fn()} setIsDropdownOpen={mocks.setIsDropdownOpen} />);
+
+  expect(screen.queryByText('Logged in')).toBeNull();
+  expect(screen.queryByText('Account')).toBeNull();
+  expect(screen.queryByText('Sign Out')).toBeNull();
+  expect(screen.queryByText('Sync Settings')).toBeNull();
+  expect(screen.getByText('Advanced Settings')).toBeTruthy();
 });
