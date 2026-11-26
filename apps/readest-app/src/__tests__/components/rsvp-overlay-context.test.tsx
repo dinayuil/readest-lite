@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 'use client';
 
 import { render, cleanup, fireEvent } from '@testing-library/react';
@@ -68,6 +69,9 @@ const buildState = (overrides: Partial<RsvpState> = {}): RsvpState => ({
   startDelaySeconds: 3,
   hasCJK: false,
   progress: 0,
+  chunkSize: 1,
+  warmup: false,
+  longWordDelay: false,
   ...overrides,
 });
 
@@ -79,6 +83,9 @@ const buildController = (state: RsvpState) => {
     },
     get currentDisplayWord() {
       return state.words[state.currentIndex] ?? null;
+    },
+    get currentChunkIndices() {
+      return [state.currentIndex];
     },
     get currentCountdown() {
       return null;
@@ -102,6 +109,10 @@ const buildController = (state: RsvpState) => {
     getWpmOptions: vi.fn(() => [100, 200, 300]),
     getPunctuationPauseOptions: vi.fn(() => [25, 50, 100]),
     getStartDelayOptions: vi.fn(() => [0, 1, 2, 3]),
+    getChunkSizeOptions: vi.fn(() => [1, 2, 3, 4, 5]),
+    setChunkSize: vi.fn(),
+    setWarmup: vi.fn(),
+    setLongWordDelay: vi.fn(),
     addEventListener: vi.fn((type: string, listener: EventListener) => {
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type)!.push(listener);
@@ -256,6 +267,17 @@ describe('RSVPOverlay — reading font', () => {
     expect(word).not.toBeNull();
     expect(word.classList.contains('font-mono')).toBe(true);
     expect(word.style.fontFamily).toBe('');
+  });
+
+  // #7467: the context text kept the app font while the word used the book's.
+  test('applies the reader font family to the context text', () => {
+    const { getByTestId } = renderOverlay(wordState(), '"Bitter", "Source Han Serif CN", serif');
+    expect(getByTestId('rsvp-context-panel').style.fontFamily).toContain('Bitter');
+  });
+
+  test('keeps the app font on the context text when no font family is supplied', () => {
+    const { getByTestId } = renderOverlay(wordState());
+    expect(getByTestId('rsvp-context-panel').style.fontFamily).toBe('');
   });
 });
 

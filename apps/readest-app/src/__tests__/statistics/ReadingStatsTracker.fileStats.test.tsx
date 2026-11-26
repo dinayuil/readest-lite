@@ -7,9 +7,7 @@ const mocks = vi.hoisted(() => ({
   envConfig: { getAppService: vi.fn(async () => ({})) },
   progress: null as unknown,
   db: {
-    upsertBook: vi.fn(async () => 1),
-    insertPageEvent: vi.fn(async () => {}),
-    recomputeBookTotals: vi.fn(async () => {}),
+    recordEvents: vi.fn(async () => {}),
   },
 }));
 

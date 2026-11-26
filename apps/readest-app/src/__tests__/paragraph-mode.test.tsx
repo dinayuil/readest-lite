@@ -1,3 +1,4 @@
+import { bookDataStoreHooks } from '@/__tests__/helpers/book-data-store-mock';
 import React from 'react';
 import {
   act,
@@ -9,9 +10,11 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ParagraphOverlay from '@/app/reader/components/paragraph/ParagraphOverlay';
+import Popup from '@/components/Popup';
 import { useParagraphMode } from '@/app/reader/hooks/useParagraphMode';
 import type { FoliateView } from '@/types/view';
 import { eventDispatcher } from '@/utils/event';
+import { hasReaderControlsOverlay, hasReaderModal } from '@/app/reader/utils/readerOverlay';
 import { ParagraphIterator } from '@/utils/paragraph';
 import {
   getParagraphActionForKey,
@@ -49,13 +52,13 @@ let mockIsFixedLayout = false;
 const mockBooksData: Record<string, { config?: { booknotes?: unknown[] } }> = {};
 
 vi.mock('@/store/bookDataStore', () => ({
-  useBookDataStore: (selector?: (state: unknown) => unknown) => {
+  ...bookDataStoreHooks((selector?: (state: unknown) => unknown) => {
     const state = {
       getBookData: () => ({ isFixedLayout: mockIsFixedLayout }),
       booksData: mockBooksData,
     };
     return selector ? selector(state) : state;
-  },
+  }),
 }));
 
 vi.mock('@/context/EnvContext', () => ({
@@ -85,7 +88,10 @@ global.ResizeObserver = class ResizeObserver {
   constructor(private readonly callback: ResizeObserverCallback) {}
 
   observe(target: Element) {
-    this.callback([{ target } as ResizeObserverEntry], this);
+    this.callback(
+      [{ target, contentRect: target.getBoundingClientRect() } as ResizeObserverEntry],
+      this,
+    );
   }
 
   disconnect() {}
@@ -675,6 +681,16 @@ describe('paragraph mode', () => {
     expect(dialog.getAttribute('style') ?? '').not.toContain('background');
   });
 
+  it('stays modal to the book but is not reader controls for the volume keys (#7227)', async () => {
+    const { container } = await renderVisibleOverlay(vi.fn());
+    expect(getDialog(container)).not.toBeNull();
+
+    // Keys typed in the book behind it still must not turn the page.
+    expect(hasReaderModal()).toBe(true);
+    // The volume keys step through its paragraphs instead of the system volume.
+    expect(hasReaderControlsOverlay()).toBe(false);
+  });
+
   it('focuses the dialog when it opens so it receives keys directly (#4717)', async () => {
     const { container } = await renderVisibleOverlay(vi.fn());
     const dialog = getDialog(container);
@@ -720,6 +736,50 @@ describe('paragraph mode', () => {
     fireEvent.keyDown(getDialog(container), { key: 'x' });
 
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('leaves a wheel outside the overlay alone (#7434)', async () => {
+    const dispatchSpy = vi.spyOn(eventDispatcher, 'dispatch');
+    const { container, overlayBookKey } = await renderVisibleOverlay(vi.fn());
+    const dialog = await waitFor(() => getDialog(container));
+    // The dictionary popup is rendered by the annotator, outside the overlay,
+    // like any other UI shown over paragraph mode.
+    const { getByText } = render(
+      <>
+        <Popup width={300}>
+          <p>Popup entry</p>
+        </Popup>
+        <div>Other UI</div>
+      </>,
+    );
+    dispatchSpy.mockClear();
+
+    expect(fireEvent.wheel(getByText('Popup entry'), { deltaY: 100 })).toBe(true);
+    expect(fireEvent.wheel(getByText('Other UI'), { deltaY: 100 })).toBe(true);
+    expect(dispatchSpy).not.toHaveBeenCalledWith('paragraph-next', { bookKey: overlayBookKey });
+
+    expect(fireEvent.wheel(dialog, { deltaY: 100 })).toBe(false);
+    expect(dispatchSpy).toHaveBeenCalledWith('paragraph-next', { bookKey: overlayBookKey });
+  });
+
+  it('still changes paragraphs on a wheel over a paragraph taller than its frame (#7434)', async () => {
+    const dispatchSpy = vi.spyOn(eventDispatcher, 'dispatch');
+    const { container, overlayBookKey } = await renderVisibleOverlay(vi.fn());
+    const paragraphContent = await waitFor(() => {
+      const node = container.querySelector('.paragraph-content') as HTMLDivElement | null;
+      expect(node).not.toBeNull();
+      return node!;
+    });
+    dispatchSpy.mockClear();
+
+    // A long paragraph overflows its `overflow-auto` frame inside the overlay.
+    const frame = paragraphContent.parentElement as HTMLDivElement;
+    frame.style.overflowY = 'auto';
+    Object.defineProperty(frame, 'scrollHeight', { value: 700 });
+    Object.defineProperty(frame, 'clientHeight', { value: 600 });
+
+    expect(fireEvent.wheel(paragraphContent, { deltaY: 100 })).toBe(false);
+    expect(dispatchSpy).toHaveBeenCalledWith('paragraph-next', { bookKey: overlayBookKey });
   });
 });
 

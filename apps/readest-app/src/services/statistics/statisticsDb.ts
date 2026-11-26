@@ -1,7 +1,14 @@
 import type { AppService } from '@/types/system';
 import type { DatabaseService, DatabaseRow } from '@/types/database';
-import { DEFAULT_STATS_TRACKING_CONFIG } from '@/types/statistics';
-import type { PageStatEvent, StatBook } from '@/types/statistics';
+import { DEFAULT_STATS_TRACKING_CONFIG, MAX_READING_SPEED_SAMPLE_MS } from '@/types/statistics';
+import type {
+  BookStats,
+  PageStatEvent,
+  ReadingSpeed,
+  ReadingSpeedSample,
+  StatBook,
+} from '@/types/statistics';
+import type { BookQuarterHourDuration } from './readingStats';
 
 interface BookRow extends DatabaseRow {
   id: number;
@@ -162,29 +169,29 @@ export class StatisticsDb {
   }
 
   async upsertBook(book: StatBook): Promise<number> {
-    return this.withWriteGate(async () => {
-      const rows = await this.db.select<DatabaseRow>(
-        `SELECT id, title, authors FROM book WHERE md5 = ? LIMIT 1`,
-        [book.bookMd5],
-      );
-      const previous = rows[0];
-      const id = await this.upsertBookUnlocked(book);
+    return this.withWriteGate(() => this.upsertLocalBookUnlocked(book));
+  }
 
-      // A real local edit advances that field's remote clock, but only when
-      // the value actually changed. Repeating the same metadata (tracker open)
-      // must not create a timestamp ping-pong against peers.
-      const now = Date.now();
-      if (
-        this.isRealStatsTitle(book.bookMd5, book.title) &&
-        asText(previous?.['title']) !== book.title
-      ) {
-        await this.touchBookFieldClock(book.bookMd5, 'title', now, LOCAL_METADATA_CLOCK_PATH);
-      }
-      if (book.authors.trim().length > 0 && asText(previous?.['authors']) !== book.authors) {
-        await this.touchBookFieldClock(book.bookMd5, 'authors', now, LOCAL_METADATA_CLOCK_PATH);
-      }
-      return id;
-    });
+  private async upsertLocalBookUnlocked(book: StatBook): Promise<number> {
+    const rows = await this.db.select<DatabaseRow>(
+      `SELECT id, title, authors FROM book WHERE md5 = ? LIMIT 1`,
+      [book.bookMd5],
+    );
+    const previous = rows[0];
+    const id = await this.upsertBookUnlocked(book);
+
+    // A real local edit advances that field's remote clock only when its value changes.
+    const now = Date.now();
+    if (
+      this.isRealStatsTitle(book.bookMd5, book.title) &&
+      asText(previous?.['title']) !== book.title
+    ) {
+      await this.touchBookFieldClock(book.bookMd5, 'title', now, LOCAL_METADATA_CLOCK_PATH);
+    }
+    if (book.authors.trim().length > 0 && asText(previous?.['authors']) !== book.authors) {
+      await this.touchBookFieldClock(book.bookMd5, 'authors', now, LOCAL_METADATA_CLOCK_PATH);
+    }
+    return id;
   }
 
   /** Raw book upsert; callers must already hold the write gate. */
@@ -314,6 +321,21 @@ export class StatisticsDb {
     );
   }
 
+  /** Bounded month query shared by native Turso and browser WASM databases. */
+  async getBookQuarterHourDurations(
+    startTime: number,
+    endTime: number,
+  ): Promise<BookQuarterHourDuration[]> {
+    return this.db.select<BookQuarterHourDuration>(
+      `SELECT b.md5 AS bookMd5, b.title, b.authors,
+              p.start_time / 900 AS quarter, SUM(p.duration) AS seconds
+       FROM page_stat_data p JOIN book b ON b.id = p.id_book
+       WHERE p.start_time >= ? AND p.start_time < ? AND p.duration > 0
+       GROUP BY b.md5, b.title, b.authors, quarter ORDER BY quarter, b.md5`,
+      [startTime, endTime],
+    );
+  }
+
   async getReadingTotals(): Promise<{ seconds: number; books: number; pages: number }> {
     const rows = await this.db.select<{ seconds: number; books: number; pages: number }>(
       `SELECT COALESCE(SUM(duration), 0) AS seconds,
@@ -322,6 +344,34 @@ export class StatisticsDb {
        FROM page_stat_data`,
     );
     return rows[0] ?? { seconds: 0, books: 0, pages: 0 };
+  }
+
+  // Local samples extend the stats DB without changing KOReader page events or
+  // the sync protocol. Queued so the write can't land inside a pull's open BEGIN.
+  async insertReadingSpeed(bookMd5: string, sample: ReadingSpeedSample): Promise<void> {
+    await this.withWriteGate(async () => {
+      await this.db.execute(
+        `INSERT INTO readest_reading_speed (start_time_ms, book_md5, unit, count, duration_ms)
+         VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+        [sample.startTimeMs, bookMd5, sample.unit, sample.count, sample.durationMs],
+      );
+    });
+  }
+
+  async getReadingSpeedSamples(startMs: number, endMs: number): Promise<ReadingSpeedSample[]> {
+    return this.db.select<ReadingSpeedSample>(
+      `SELECT start_time_ms AS startTimeMs, unit, count, duration_ms AS durationMs
+       FROM readest_reading_speed
+       WHERE start_time_ms >= ? AND start_time_ms < ? AND start_time_ms + duration_ms > ?`,
+      [startMs - MAX_READING_SPEED_SAMPLE_MS, endMs, startMs],
+    );
+  }
+
+  async getReadingSpeedTotals(): Promise<ReadingSpeed[]> {
+    return this.db.select<ReadingSpeed>(
+      `SELECT unit, SUM(count) AS count, SUM(duration_ms) AS durationMs
+       FROM readest_reading_speed GROUP BY unit ORDER BY unit`,
+    );
   }
 
   async getBookByMd5(md5: string): Promise<BookRow | null> {
@@ -396,6 +446,10 @@ export class StatisticsDb {
         touched.add(id);
       }
       for (const id of touched) await this.recomputeBookTotalsUnlocked(id);
+      // A book whose statistics were deleted on another device (#7494).
+      for (const b of books) {
+        if (b.deletedAt !== undefined) await this.deleteEventsBefore(b.bookMd5, b.deletedAt);
+      }
     });
   }
 
@@ -812,6 +866,99 @@ export class StatisticsDb {
        ON CONFLICT(target_id, chunk_path) DO UPDATE SET seen_at = excluded.seen_at`,
       [targetId, chunkPath, seenAt],
     );
+  }
+
+  /** Per-book totals, most recently read first; only `md5` when given. */
+  async getBookStats(md5?: string): Promise<BookStats[]> {
+    return this.db.select<BookStats>(
+      `SELECT b.md5 AS md5, b.title AS title, b.authors AS authors,
+              SUM(p.duration) AS seconds, COUNT(DISTINCT p.page) AS pages,
+              MAX(p.start_time + p.duration) AS lastRead
+       FROM page_stat_data p JOIN book b ON b.id = p.id_book
+       ${md5 ? 'WHERE b.md5 = ?' : ''}
+       GROUP BY b.md5 ORDER BY lastRead DESC`,
+      md5 ? [md5] : [],
+    );
+  }
+
+  /** Delete every page event of a book, and its book row. */
+  async deleteBook(md5: string): Promise<void> {
+    await this.withTransaction(() => this.deleteEventsBefore(md5, Number.MAX_SAFE_INTEGER));
+  }
+
+  /** Every page event of a book, oldest first. */
+  async getBookEvents(md5: string): Promise<PageStatEvent[]> {
+    const rows = await this.db.select<{
+      page: number;
+      startTime: number;
+      duration: number;
+      totalPages: number;
+    }>(
+      `SELECT p.page AS page, p.start_time AS startTime, p.duration AS duration,
+              p.total_pages AS totalPages
+       FROM page_stat_data p JOIN book b ON b.id = p.id_book
+       WHERE b.md5 = ? ORDER BY p.start_time, p.page`,
+      [md5],
+    );
+    return rows.map((r) => ({ bookMd5: md5, ...r }));
+  }
+
+  /**
+   * Record a book's page events and refresh its totals, after any merge,
+   * deletion or pull in progress: run between them, the events could go to a
+   * row that is then deleted, or be deleted without being merged.
+   */
+  async recordEvents(
+    book: StatBook,
+    events: { page: number; startTime: number; duration: number; totalPages: number }[],
+  ): Promise<void> {
+    await this.withWriteGate(async () => {
+      const id = await this.upsertLocalBookUnlocked(book);
+      for (const e of events) await this.insertPageEventUnlocked(id, e);
+      await this.recomputeBookTotalsUnlocked(id);
+    });
+  }
+
+  /** Move a book's events and speed samples onto the target and delete the source. */
+  async mergeBook(source: string, target: StatBook): Promise<void> {
+    await this.withTransaction(async () => {
+      const events = await this.getBookEvents(source);
+      const id = await this.upsertLocalBookUnlocked(target);
+      for (const e of events) await this.insertPageEventUnlocked(id, e);
+      await this.recomputeBookTotalsUnlocked(id);
+      // A sample both hold at the same moment stays once, like a page event.
+      await this.db.execute(
+        `INSERT INTO readest_reading_speed (start_time_ms, book_md5, unit, count, duration_ms)
+         SELECT start_time_ms, ?, unit, count, duration_ms FROM readest_reading_speed
+         WHERE book_md5 = ? ON CONFLICT DO NOTHING`,
+        [target.bookMd5, source],
+      );
+      await this.deleteEventsBefore(source, Number.MAX_SAFE_INTEGER);
+    });
+  }
+
+  /**
+   * Delete a book's events and speed samples that started before `before`;
+   * drop its row once no events are left.
+   */
+  private async deleteEventsBefore(md5: string, before: number): Promise<void> {
+    await this.db.execute(
+      `DELETE FROM readest_reading_speed WHERE book_md5 = ? AND start_time_ms < ?`,
+      [md5, Math.min(before * 1000, Number.MAX_SAFE_INTEGER)],
+    );
+    const rows = await this.db.select<BookRow>(`SELECT id FROM book WHERE md5 = ?`, [md5]);
+    for (const { id } of rows) {
+      await this.db.execute(`DELETE FROM page_stat_data WHERE id_book = ? AND start_time < ?`, [
+        id,
+        before,
+      ]);
+      const left = await this.db.select<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM page_stat_data WHERE id_book = ?`,
+        [id],
+      );
+      if (left[0]?.n) await this.recomputeBookTotalsUnlocked(id);
+      else await this.db.execute(`DELETE FROM book WHERE id = ?`, [id]);
+    }
   }
 
   async getCursor(key: CursorKey): Promise<number> {

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, test } from 'vitest';
 import {
   CUSTOM_TRANSLATOR_KIND,
@@ -94,6 +95,19 @@ describe('customTranslatorAdapter', () => {
       id: 'rid',
       reincarnation: 'r1',
     });
+  });
+
+  test('an on-device translator syncs with only its name and temperature', () => {
+    const onDevice: CustomTranslator = {
+      id: 't-2',
+      type: 'apple-intelligence',
+      name: 'Apple Intelligence',
+      temperature: 0.2,
+      addedAt: 1700000000000,
+      updatedAt: 1700000000001,
+    };
+    const row = makeRow(CUSTOM_TRANSLATOR_KIND, envelopes(customTranslatorAdapter.pack(onDevice)));
+    expect(customTranslatorAdapter.unpackRow(row, '')).toEqual({ ...onDevice, id: 'rid' });
   });
 
   test('unpackRow returns null on missing name or invalid type', () => {

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { TTSClient, TTSMessageEvent } from '@/services/tts/TTSClient';
 import type { TTSGranularity, TTSVoice } from '@/services/tts/types';
@@ -107,6 +108,7 @@ vi.mock('@/services/tts/BufferedTTSClient', () => ({
       (this['getAllVoices'] as ReturnType<typeof vi.fn>).mockImplementation(
         async () => h.customVoices ?? CUSTOM_VOICES,
       );
+      this['refreshVoices'] = this['getAllVoices'];
       (this['getVoices'] as ReturnType<typeof vi.fn>).mockResolvedValue([
         { id: 'custom-tts:svc', name: 'My TTS', voices: CUSTOM_VOICES },
       ]);

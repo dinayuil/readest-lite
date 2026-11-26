@@ -1,31 +1,108 @@
 import React, { useMemo, useState } from 'react';
 import clsx from 'clsx';
-import { MdArrowDropDown, MdSearch } from 'react-icons/md';
+import { MdArrowDropDown, MdSearch, MdSort } from 'react-icons/md';
 import { IoMdCloseCircle } from 'react-icons/io';
 import {
   PiArrowsClockwise,
+  PiBookOpenText,
   PiBooks,
+  PiCards,
   PiCardsThree,
   PiDotsThreeVertical,
   PiDownloadSimple,
   PiExport,
   PiFileCsv,
+  PiGlobe,
+  PiSpeakerHigh,
 } from 'react-icons/pi';
+import type { IconType } from 'react-icons';
 
 import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useVocabularyStore } from '@/store/vocabularyStore';
-import { filterEntries, lastSeen, listBooks } from '@/services/vocabulary/filter';
+import { ankiProfileOf } from '@/services/vocabulary/anki';
+import {
+  filterEntries,
+  lastSeen,
+  listBooks,
+  listLanguages,
+  type VocabularySort,
+} from '@/services/vocabulary/filter';
 import { toAnkiText, toCsv } from '@/services/vocabulary/export';
 import type { VocabularyState } from '@/services/vocabulary/types';
 import { eventDispatcher } from '@/utils/event';
+import { getLanguageName } from '@/utils/lang';
 import { getLocale } from '@/utils/misc';
 import Dropdown from '@/components/Dropdown';
 import Menu from '@/components/Menu';
 import MenuItem from '@/components/MenuItem';
+import AnkiAudioPanel from './AnkiAudioPanel';
+import AnkiEntryPanel from './AnkiEntryPanel';
 import AnkiImportPanel from './AnkiImportPanel';
+import AnkiProfilesPanel from './AnkiProfilesPanel';
 import VocabularyDetail from './VocabularyDetail';
 import { useAnkiLink } from './useAnkiLink';
+
+// The Profile chip's value for words on Readest's own cards.
+const READEST_CARDS = 'readest';
+
+// The picker lines up with a chip's edge; a half-hidden chip at the end of the
+// row would open a half-hidden picker.
+const revealChip = (chip: Element | null) =>
+  chip?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+
+const languageLabel = (code: string): string => {
+  try {
+    return new Intl.DisplayNames([getLocale()], { type: 'language' }).of(code) ?? code;
+  } catch {
+    return getLanguageName(code);
+  }
+};
+
+interface FilterChipProps {
+  icon: IconType;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  /** The first option, with an empty value, turns the filter off. */
+  options: { value: string; label: string }[];
+}
+
+const FilterChip: React.FC<FilterChipProps> = ({ icon: Icon, label, value, onChange, options }) => (
+  <div
+    onPointerDown={(e) => revealChip(e.currentTarget)}
+    className={clsx(
+      '[anchor-name:--settings-select] [anchor-scope:--settings-select]',
+      'relative flex h-8 max-w-52 shrink-0 items-center rounded-full',
+      'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-base-content/15 eink:has-[:focus-visible]:ring-base-content',
+      value ? 'btn-contrast' : 'eink-bordered bg-base-200',
+    )}
+  >
+    <Icon aria-hidden='true' className='pointer-events-none absolute start-3 h-4 w-4' />
+    <select
+      aria-label={label}
+      value={value}
+      onChange={(e) => {
+        onChange(e.target.value);
+        // The chip widens to the chosen label; keep all of it in view.
+        const chip = e.currentTarget.parentElement;
+        requestAnimationFrame(() => revealChip(chip));
+      }}
+      className='select h-8 min-h-8 min-w-0 cursor-pointer truncate rounded-full border-0! bg-transparent! bg-none! ps-8! pe-7! text-sm text-inherit shadow-none! outline-hidden!'
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+    <MdArrowDropDown
+      aria-hidden='true'
+      className='pointer-events-none absolute end-1.5 h-5 w-5 opacity-60'
+    />
+  </div>
+);
 
 interface VocabularyViewProps {
   /** Called before leaving for the reader (Open in book), to close the window. */
@@ -38,19 +115,51 @@ const VocabularyView: React.FC<VocabularyViewProps> = ({ onOpenBook }) => {
   const entries = useVocabularyStore((s) => s.entries);
   const [state, setState] = useState<VocabularyState | undefined>();
   const [bookHash, setBookHash] = useState('');
+  const [lang, setLang] = useState('');
+  const [profileId, setProfileId] = useState('');
   const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<VocabularySort>('recent');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const anki = useAnkiLink();
+  const ankiProfiles = useSettingsStore((s) => s.settings.ankiProfiles);
+  // Profiles shape Sync's cards, so the filter shows only where Sync runs.
+  const profiles = anki.available ? (ankiProfiles?.profiles ?? []) : [];
 
   const all = useMemo(() => Object.values(entries), [entries]);
   const books = useMemo(() => listBooks(all), [all]);
+  const languages = useMemo(
+    () =>
+      listLanguages(all)
+        .map((code) => ({
+          value: code,
+          label: code === 'und' ? _('Unknown') : languageLabel(code),
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [all, _],
+  );
+  // Deleting a language's last word drops it from the list, and the filter with
+  // it; the language coming back later doesn't turn the filter on again.
+  if (lang && !languages.some((l) => l.value === lang)) setLang('');
+  // A profile deleted here or on another device takes its filter with it, and
+  // all of them go when AnkiDroid does.
+  const profileShown =
+    profileId === READEST_CARDS ? profiles.length > 0 : profiles.some((p) => p.id === profileId);
+  if (profileId && !profileShown) setProfileId('');
   const byBook = useMemo(
-    () => filterEntries(all, { bookHash: bookHash || undefined, query }),
-    [all, bookHash, query],
+    () =>
+      filterEntries(all, { bookHash: bookHash || undefined, lang: lang || undefined, query }, sort),
+    [all, bookHash, lang, query, sort],
+  );
+  const byProfile = useMemo(
+    () =>
+      profileId
+        ? byBook.filter((e) => (ankiProfileOf(e, ankiProfiles)?.id ?? READEST_CARDS) === profileId)
+        : byBook,
+    [byBook, profileId, ankiProfiles],
   );
   const shown = useMemo(
-    () => (state ? byBook.filter((e) => e.state === state) : byBook),
-    [byBook, state],
+    () => (state ? byProfile.filter((e) => e.state === state) : byProfile),
+    [byProfile, state],
   );
   const selected = selectedId ? entries[selectedId] : undefined;
   const detail = selected && !selected.deletedAt ? selected : undefined;
@@ -61,9 +170,14 @@ const VocabularyView: React.FC<VocabularyViewProps> = ({ onOpenBook }) => {
     { state: 'learning', label: _('Learning') },
     { state: 'mastered', label: _('Mastered') },
   ];
-
-  const revealChip = (chip: Element | null) =>
-    chip?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  const sortOptions: { value: VocabularySort; label: string }[] = [
+    { value: 'recent', label: _('Last Looked Up') },
+    { value: 'occurrences', label: _('Most Saved Sentences') },
+    { value: 'newest', label: _('Newest Added') },
+    { value: 'oldest', label: _('Oldest Added') },
+    { value: 'az', label: _('Alphabetical A-Z') },
+    { value: 'za', label: _('Alphabetical Z-A') },
+  ];
 
   const exportAs = async (format: 'csv' | 'anki') => {
     if (format === 'anki' && !anki.guardFileExport()) return;
@@ -79,14 +193,36 @@ const VocabularyView: React.FC<VocabularyViewProps> = ({ onOpenBook }) => {
     });
   };
 
-  const importPanel = anki.importState && (
-    <AnkiImportPanel {...anki.importState} onImport={anki.runImport} onCancel={anki.closeImport} />
+  const panel = anki.audioPrompt ? (
+    <AnkiAudioPanel onAnswer={anki.answerAudioPrompt} />
+  ) : anki.profilesState ? (
+    <AnkiProfilesPanel
+      {...anki.profilesState}
+      languages={languages}
+      books={books}
+      onSave={anki.saveProfiles}
+      onCancel={anki.closeProfiles}
+    />
+  ) : anki.entryPicker ? (
+    <AnkiEntryPanel
+      {...anki.entryPicker}
+      onSave={anki.saveEntryPicker}
+      onCancel={anki.closeEntryPicker}
+    />
+  ) : (
+    anki.importState && (
+      <AnkiImportPanel
+        {...anki.importState}
+        onImport={anki.runImport}
+        onCancel={anki.closeImport}
+      />
+    )
   );
 
   if (all.every((e) => e.deletedAt)) {
     return (
       <div className='flex h-full flex-col items-center justify-center gap-4 px-6 py-12 text-center'>
-        {importPanel || (
+        {panel || (
           <>
             <p className='not-eink:opacity-70 text-sm'>
               {_('Words you look up while reading appear here.')}
@@ -146,6 +282,24 @@ const VocabularyView: React.FC<VocabularyViewProps> = ({ onOpenBook }) => {
           </button>
         )}
         <Dropdown
+          label={_('Sort by')}
+          className='dropdown-bottom dropdown-end'
+          buttonClassName='btn btn-ghost btn-circle eink-bordered bg-base-200 h-10 min-h-10 w-10 p-0'
+          toggleButton={<MdSort aria-hidden='true' className='h-5 w-5' />}
+        >
+          <Menu className='dropdown-content no-triangle border-base-300 bg-base-100 z-20 mt-1 min-w-48 rounded-lg border shadow-lg'>
+            {sortOptions.map(({ value, label }) => (
+              <MenuItem
+                key={value}
+                label={label}
+                toggled={sort === value}
+                transient
+                onClick={() => setSort(value)}
+              />
+            ))}
+          </Menu>
+        </Dropdown>
+        <Dropdown
           // With AnkiDroid the menu also imports, so it isn't only Export.
           label={anki.available ? _('More') : _('Export')}
           disabled={!shown.length && !anki.available}
@@ -184,6 +338,34 @@ const VocabularyView: React.FC<VocabularyViewProps> = ({ onOpenBook }) => {
                 onClick={() => void anki.openImport()}
               />
             )}
+            {anki.available && (
+              <MenuItem
+                label={_('Anki Card Profiles...')}
+                description={anki.premiumBadge}
+                Icon={PiCards}
+                transient
+                onClick={() => void anki.openProfiles()}
+              />
+            )}
+            {anki.available && (
+              <MenuItem
+                label={_('Dictionary for Anki Cards...')}
+                description={anki.premiumBadge}
+                Icon={PiBookOpenText}
+                transient
+                onClick={() => void anki.openEntryPicker()}
+              />
+            )}
+            {anki.available && anki.audioDeclined && (
+              <MenuItem
+                label={_('Add Audio to Anki Cards')}
+                Icon={PiSpeakerHigh}
+                transient
+                // Its Sync would run alongside the one in progress.
+                disabled={anki.syncing}
+                onClick={anki.addAudio}
+              />
+            )}
           </Menu>
         </Dropdown>
       </div>
@@ -195,7 +377,9 @@ const VocabularyView: React.FC<VocabularyViewProps> = ({ onOpenBook }) => {
       >
         {stateFilters.map((f) => {
           const active = state === f.state;
-          const count = f.state ? byBook.filter((e) => e.state === f.state).length : byBook.length;
+          const count = f.state
+            ? byProfile.filter((e) => e.state === f.state).length
+            : byProfile.length;
           return (
             <button
               key={f.label}
@@ -212,45 +396,42 @@ const VocabularyView: React.FC<VocabularyViewProps> = ({ onOpenBook }) => {
             </button>
           );
         })}
-        <div
-          // The picker lines up with this chip's edge; a half-hidden chip at the
-          // end of the row would open a half-hidden picker.
-          onPointerDown={(e) => revealChip(e.currentTarget)}
-          className={clsx(
-            '[anchor-name:--settings-select] [anchor-scope:--settings-select]',
-            'relative flex h-8 max-w-52 shrink-0 items-center rounded-full',
-            'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-base-content/15 eink:has-[:focus-visible]:ring-base-content',
-            bookHash ? 'btn-contrast' : 'eink-bordered bg-base-200',
-          )}
-        >
-          <PiBooks aria-hidden='true' className='pointer-events-none absolute start-3 h-4 w-4' />
-          <select
-            aria-label={_('Book')}
-            value={bookHash}
-            onChange={(e) => {
-              setBookHash(e.target.value);
-              // The chip widens to the book's title; keep all of it in view.
-              const chip = e.currentTarget.parentElement;
-              requestAnimationFrame(() => revealChip(chip));
-            }}
-            className='select h-8 min-h-8 min-w-0 cursor-pointer truncate rounded-full border-0! bg-transparent! bg-none! ps-8! pe-7! text-sm text-inherit shadow-none! outline-hidden!'
-          >
-            <option value=''>{_('All Books')}</option>
-            {books.map((b) => (
-              <option key={b.hash} value={b.hash}>
-                {b.title}
-              </option>
-            ))}
-          </select>
-          <MdArrowDropDown
-            aria-hidden='true'
-            className='pointer-events-none absolute end-1.5 h-5 w-5 opacity-60'
+        <FilterChip
+          icon={PiBooks}
+          label={_('Book')}
+          value={bookHash}
+          onChange={setBookHash}
+          options={[
+            { value: '', label: _('All Books') },
+            ...books.map((b) => ({ value: b.hash, label: b.title })),
+          ]}
+        />
+        {languages.length > 1 && (
+          <FilterChip
+            icon={PiGlobe}
+            label={_('Language')}
+            value={lang}
+            onChange={setLang}
+            options={[{ value: '', label: _('All Languages') }, ...languages]}
           />
-        </div>
+        )}
+        {profiles.length > 0 && (
+          <FilterChip
+            icon={PiCards}
+            label={_('Profile')}
+            value={profileId}
+            onChange={setProfileId}
+            options={[
+              { value: '', label: _('All Profiles') },
+              { value: READEST_CARDS, label: _('Readest Vocabulary') },
+              ...profiles.map((p) => ({ value: p.id, label: p.name })),
+            ]}
+          />
+        )}
       </div>
 
       <div className='border-base-content/10 flex min-h-0 flex-1 border-t'>
-        {importPanel || (
+        {panel || (
           <>
             <ul
               aria-label={_('Words')}
@@ -306,7 +487,7 @@ const VocabularyView: React.FC<VocabularyViewProps> = ({ onOpenBook }) => {
                 </li>
               )}
             </ul>
-            <div className={clsx('min-h-0 flex-1', detail ? 'flex' : 'hidden sm:flex')}>
+            <div className={clsx('min-h-0 min-w-0 flex-1', detail ? 'flex' : 'hidden sm:flex')}>
               {detail ? (
                 <VocabularyDetail
                   entry={detail}

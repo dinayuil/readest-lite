@@ -41,12 +41,13 @@ const DesktopFooterBar: React.FC<FooterBarChildProps> = ({
     }
   }, [hoveredBookKey, bookKey]);
 
-  useEffect(() => {
-    if (progressValid) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setProgressValue(progressFraction * 100);
-    }
-  }, [progressValid, progressFraction]);
+  // Synced during render, so a footer shown after page turns shows the current
+  // position in the commit that shows it.
+  const [shownFraction, setShownFraction] = React.useState<number | null>(null);
+  if (progressValid && progressFraction !== shownFraction) {
+    setShownFraction(progressFraction);
+    setProgressValue(progressFraction * 100);
+  }
 
   // The page label previews the slider while it is dragged, until the reader
   // relocates and reports the real page.
@@ -68,9 +69,12 @@ const DesktopFooterBar: React.FC<FooterBarChildProps> = ({
   const isMobile = window.innerWidth < 640 || window.innerHeight < 640;
 
   return (
+    // overflow-y-hidden: `overflow-x-auto` alone makes the y axis `auto` too,
+    // and the buttons' 44px touch halos reach 6px past this 32px row, so the
+    // wheel scrolled the whole row up 6px (#7985).
     <div
       className={clsx(
-        'hidden h-8 w-full items-center gap-x-4 overflow-x-auto px-4',
+        'hidden h-8 w-full items-center gap-x-4 overflow-x-auto overflow-y-hidden px-4',
         !forceMobileLayout && 'sm:flex',
       )}
       style={{
@@ -147,4 +151,6 @@ const DesktopFooterBar: React.FC<FooterBarChildProps> = ({
   );
 };
 
-export default DesktopFooterBar;
+// Memoized so a footer that keeps its props (hidden, between page turns) skips
+// its panels and buttons.
+export default React.memo(DesktopFooterBar);

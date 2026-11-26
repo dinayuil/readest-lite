@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest';
 import { vi } from 'vitest';
 import {
@@ -286,6 +287,36 @@ describe('getStyles italic dialogue', () => {
     const rule = italicRule(css);
     expect(rule).toContain('#0066cc');
     expect(rule).toContain('color: #112233 !important');
+  });
+
+  // iOS 16's WebKit stops wrapping a line that holds an inline with
+  // -webkit-box-decoration-break: clone (#7765). Without a background the
+  // clone has nothing to repeat, so it is left out there.
+  it('clones line fragments only when the mark has a background', () => {
+    const marks = (css: string) =>
+      (css.match(/(\.readest-dialogue|:is\(i, em\)) \{[^}]*\}/g) ?? []).join('\n');
+    const textOnly = marks(
+      getStyles(
+        makeViewSettings({
+          dialogueHighlight: false,
+          dialogueHighlightItalic: true,
+          dialogueHighlightCustomTextColor: true,
+          dialogueHighlightTextColor: '#112233',
+          dialogueHighlightWeight: 'slightly-heavier',
+        }),
+        themeCode,
+      ),
+    );
+    expect(textOnly).toContain('color: #112233 !important');
+    expect(textOnly).not.toContain('box-decoration-break');
+
+    const tinted = marks(
+      getStyles(
+        makeViewSettings({ dialogueHighlight: true, dialogueHighlightItalic: true }),
+        themeCode,
+      ),
+    );
+    expect(tinted.match(/-webkit-box-decoration-break: clone;/g)?.length).toBe(2);
   });
 
   it('emits nothing for italic text while dialogue marking is off', () => {

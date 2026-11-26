@@ -1,8 +1,9 @@
 import clsx from 'clsx';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useBookProgress } from '@/store/readerProgressStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useTranslation } from '@/hooks/useTranslation';
-import { useBookDataStore } from '@/store/bookDataStore';
+import { useBookData } from '@/store/bookDataStore';
 import type { PageInfo } from '@/types/book';
 import {
   collectLabels,
@@ -10,6 +11,8 @@ import {
   formatProgressPercent,
   getReferencePageInfo,
 } from '@/utils/progress';
+import { getChapterScreensVersion, subscribeChapterScreens } from '@/utils/chapterScreens';
+import { getScreenPageFraction, getScreenPageInfo, usesScreenPages } from '../../utils/screenPages';
 import { clampPage, findReferencePageHref, fractionForPage, parsePageInput } from './pageJump';
 
 interface PageJumpInputProps {
@@ -36,11 +39,10 @@ const PageJumpInput: React.FC<PageJumpInputProps> = ({
   className,
 }) => {
   const _ = useTranslation();
-  const { hoveredBookKey, getView, getProgress, getViewSettings } = useReaderStore();
-  const { getBookData } = useBookDataStore();
+  const { hoveredBookKey, getView, getViewSettings } = useReaderStore();
   const view = getView(bookKey);
-  const bookData = getBookData(bookKey);
-  const progress = getProgress(bookKey);
+  const bookData = useBookData(bookKey);
+  const progress = useBookProgress(bookKey);
   const viewSettings = getViewSettings(bookKey);
   const progressStyle = viewSettings?.progressStyle || 'percentage';
 
@@ -73,18 +75,25 @@ const PageJumpInput: React.FC<PageJumpInputProps> = ({
   }, [hoveredBookKey, bookKey]);
 
   const { section, pageinfo } = progress || {};
-  const livePageInfo = bookData?.isFixedLayout ? section : pageinfo;
+  const sections = bookData?.bookDoc?.sections;
+  const screenPages = usesScreenPages(viewSettings, bookData?.isFixedLayout, sections);
+  const screensVersion = useSyncExternalStore(subscribeChapterScreens, getChapterScreensVersion);
+  // The footer's screen pair, memoized so the last-valid check below sees the
+  // same object until the position or the measurements change.
+  const screenPageInfo = useMemo(
+    () => (screenPages && progress ? getScreenPageInfo(bookKey, view, sections!, progress) : null),
+    [screenPages, bookKey, view, sections, progress, screensVersion],
+  );
+  const livePageInfo = bookData?.isFixedLayout ? section : (screenPageInfo ?? pageinfo);
   const liveValid = !!livePageInfo && livePageInfo.total > 0 && livePageInfo.current >= 0;
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (liveValid) setLastPageInfo(livePageInfo);
-  }, [liveValid, livePageInfo]);
 
   // Keep showing the last valid page while a relocation briefly reports an
   // invalid one: unmounting the label widens the progress slider under a
   // dragging cursor, which jumps somewhere else and brings the label back,
-  // looping into a jitter (#6646).
+  // looping into a jitter (#6646). Remembered while rendering, as React
+  // re-renders this alone at once: from an effect, every page turn took a
+  // second commit through the whole tree.
+  if (liveValid && livePageInfo !== lastPageInfo) setLastPageInfo(livePageInfo);
   const pageInfo = liveValid ? livePageInfo : lastPageInfo;
   if (!pageInfo) return null;
 
@@ -149,14 +158,19 @@ const PageJumpInput: React.FC<PageJumpInputProps> = ({
   const jumpToPage = (page: number) => {
     if (!view) return;
     const target = clampPage(page, total);
+    // A typed page is a jump the reader asked for, so they can come back from it.
+    const jump = { focus: true };
     if (referenceInfo) {
       const href = findReferencePageHref(bookData?.bookDoc?.pageList, target);
-      if (href) view.goTo(href);
-      else view.goToFraction(fractionForPage(target, total));
+      if (href) view.goTo(href, jump);
+      else view.goTo({ fraction: fractionForPage(target, total) }, jump);
     } else if (bookData?.isFixedLayout) {
-      view.goTo(target - 1);
+      view.goTo(target - 1, jump);
+    } else if (screenPages) {
+      const fraction = getScreenPageFraction(bookKey, view, sections!, target - 1);
+      if (fraction !== null) view.goTo({ fraction }, jump);
     } else {
-      view.goToFraction(fractionForPage(target, total));
+      view.goTo({ fraction: fractionForPage(target, total) }, jump);
     }
   };
 

@@ -1,6 +1,6 @@
 import { Fzf, FzfResultItem, byLengthAsc } from 'fzf';
 import { SettingsPanelType } from '@/components/settings/SettingsDialog';
-import { RiFontSize, RiDashboardLine, RiTranslate, RiShareLine } from 'react-icons/ri';
+import { RiFontSize, RiDashboardLine, RiTranslate2, RiShareLine } from 'react-icons/ri';
 import { VscSymbolColor } from 'react-icons/vsc';
 import { LiaHandPointerSolid } from 'react-icons/lia';
 import { IoAccessibilityOutline } from 'react-icons/io5';
@@ -153,7 +153,7 @@ const panelIcons: Record<SettingsPanelType, IconType> = {
   Theme: VscSymbolColor,
   Control: LiaHandPointerSolid,
   TTS: PiSpeakerHigh,
-  Language: RiTranslate,
+  Language: RiTranslate2,
   AI: PiRobot,
   Integrations: RiShareLine,
   Custom: IoAccessibilityOutline,
@@ -337,6 +337,12 @@ const layoutPanelItems = [
     id: 'settings.layout.progressDisplay',
     labelKey: _('Reading Progress Style'),
     keywords: ['progress', 'display', 'page', 'number', 'percentage'],
+    section: 'Header & Footer',
+  },
+  {
+    id: 'settings.layout.solidScrolledFooter',
+    labelKey: _('Solid Footer in Scrolled Mode'),
+    keywords: ['footer', 'solid', 'scrolled', 'scroll', 'bottom', 'bar', 'band'],
     section: 'Header & Footer',
   },
   {
@@ -550,6 +556,12 @@ const controlPanelItems = [
     id: 'settings.control.copyToNotebook',
     labelKey: _('Copy to Notebook'),
     keywords: ['copy', 'notebook', 'annotation', 'excerpt'],
+    section: 'Annotation Tools',
+  },
+  {
+    id: 'settings.control.copyWithCitation',
+    labelKey: _('Copy with Citation'),
+    keywords: ['copy', 'citation', 'cite', 'reference', 'source', 'quote'],
     section: 'Annotation Tools',
   },
   {

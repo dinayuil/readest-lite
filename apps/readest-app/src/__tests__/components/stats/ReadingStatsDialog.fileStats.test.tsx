@@ -1,10 +1,15 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import ReadingStatsDialog, {
+  setReadingStatsDialogVisible,
+} from '@/components/stats/ReadingStatsDialog';
 
 const mocks = vi.hoisted(() => ({
   db: {
     getQuarterHourDurations: vi.fn(async () => []),
     getReadingTotals: vi.fn(async () => ({ seconds: 0, books: 7, pages: 11 })),
+    getReadingSpeedSamples: vi.fn(async () => []),
+    getReadingSpeedTotals: vi.fn(async () => []),
   },
   open: vi.fn(),
   runAll: vi.fn(),
@@ -31,9 +36,6 @@ vi.mock('@/libs/sync', () => ({ SyncClient: class {} }));
 vi.mock('@/services/sync/syncCategories', () => ({ isSyncCategoryEnabled: () => true }));
 
 const openDialog = async () => {
-  const { default: ReadingStatsDialog, setReadingStatsDialogVisible } = await import(
-    '@/components/stats/ReadingStatsDialog'
-  );
   render(<ReadingStatsDialog />);
   await act(async () => setReadingStatsDialogVisible(true));
 };

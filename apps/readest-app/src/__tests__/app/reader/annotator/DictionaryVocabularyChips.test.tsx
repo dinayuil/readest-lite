@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Learning / Mastered chips in the dictionary header and automatic capture
  * of lookups into the vocabulary builder (#789, #6613).
@@ -94,14 +95,42 @@ describe('dictionary vocabulary chips', () => {
     );
   });
 
-  it('records nothing with capture turned off until a chip is tapped', () => {
+  it.each([
+    ['Learning', 'learning'],
+    ['Mastered', 'mastered'],
+  ])('saves the source on an explicit %s mark with auto-save off', (label, state) => {
     useCustomDictionaryStore.setState({
       settings: { ...useCustomDictionaryStore.getState().settings, saveLookupsToVocabulary: false },
     });
     sheet({ capture });
     expect(entries()).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: 'Mastered' }));
-    expect(entries()[0]).toMatchObject({ state: 'mastered', occurrences: [] });
+    fireEvent.click(screen.getByRole('button', { name: label }));
+    expect(entries()[0]).toMatchObject({ state, occurrences: [capture.occurrence] });
+  });
+
+  // #7691: with auto-save off, a word already marked keeps collecting the
+  // sentences it is looked up in (a Word Lens hint tap is such a lookup);
+  // a word that isn't marked still gets nothing.
+  it.each([
+    'learning',
+    'mastered',
+  ] as const)('saves the sentence of a %s word with auto-save off', (state) => {
+    useCustomDictionaryStore.setState({
+      settings: { ...useCustomDictionaryStore.getState().settings, saveLookupsToVocabulary: false },
+    });
+    const store = useVocabularyStore.getState();
+    store.setState(store.ensureEntry('serendipity', 'en'), state);
+    sheet({ capture });
+    expect(entries()[0]).toMatchObject({ state, occurrences: [capture.occurrence] });
+  });
+
+  it('saves no sentence of an unmarked word with auto-save off', () => {
+    useCustomDictionaryStore.setState({
+      settings: { ...useCustomDictionaryStore.getState().settings, saveLookupsToVocabulary: false },
+    });
+    useVocabularyStore.getState().ensureEntry('serendipity', 'en');
+    sheet({ capture });
+    expect(entries()[0]).toMatchObject({ state: 'none', occurrences: [] });
   });
 
   it('shows chips without recording when the capture has no sentence', () => {

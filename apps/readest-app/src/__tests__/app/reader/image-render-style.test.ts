@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
 import {
   captureImageRenderStyle,
@@ -128,6 +129,13 @@ describe('resolveImagePlate', () => {
       resolveImagePlate({
         pagePlate: '#ffffff',
         filter: 'url("data:image/svg+xml,...#readest-white-transparent")',
+        ink: lineArt,
+      }),
+    ).toBeNull();
+    expect(
+      resolveImagePlate({
+        pagePlate: '#ffffff',
+        filter: 'url("#readest-dark-monochrome-c6c6c6")',
         ink: lineArt,
       }),
     ).toBeNull();

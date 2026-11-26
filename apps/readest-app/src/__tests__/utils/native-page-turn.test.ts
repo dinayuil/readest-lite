@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi } from 'vitest';
 import {
   NativePageTurn,
@@ -165,6 +166,47 @@ describe('Android native page-turn pipeline', () => {
     }
   });
 
+  // A PDF page draws its sharp layer only once on screen. Its sheet was taken
+  // while it was the neighbour being turned to, so the next touch would show
+  // that softer copy over the live page.
+  it('retakes the current page once its pixels change after a turn', async () => {
+    const f = fixture();
+    const { controller } = f;
+    // The native bank keeps three sheets, never evicting the one on screen.
+    const bank: string[] = [];
+    let shown = '';
+    const call = f.call.getMockImplementation()!;
+    f.call.mockImplementation(async (args) => {
+      const result = await call(args);
+      if (args.op === 'cover') shown = args.key!;
+      if (args.op === 'start') shown = args.destination!;
+      if (args.op !== 'capture') return result;
+      if (bank.includes(args.key!)) bank.splice(bank.indexOf(args.key!), 1);
+      bank.push(args.key!);
+      while (bank.length > 3)
+        bank.splice(
+          bank.findIndex((key) => key !== shown),
+          1,
+        );
+      return { ...result, keys: [...bank] };
+    });
+    try {
+      await controller.prepareCapture('curl');
+      expect(await controller.turn(true, false)).toBe(true);
+      await controller.prepareCapture('curl');
+      f.call.mockClear();
+      (controller as unknown as { refreshCurrentPage?: () => void }).refreshCurrentPage?.();
+      await controller.prepareCapture('curl');
+      const captured = f.call.mock.calls.filter(([args]) => args.op === 'capture');
+      expect(
+        captured.map(([args]) => args.key),
+        'the page now on screen is captured again',
+      ).toContain('2');
+    } finally {
+      controller.dispose();
+    }
+  });
+
   describe('resident pages reported during a held invalidation', () => {
     // The native bank lists every resident page, including those the held
     // invalidation is about to delete.
@@ -258,6 +300,29 @@ describe('Android native page-turn pipeline', () => {
       expect(f.capture).not.toHaveBeenCalled();
     } finally {
       f.controller.dispose();
+    }
+  });
+
+  // A horizontal page between vertical sections (#7829). A vertical layout
+  // names no pages, so the page a cold turn lands on there has no key.
+  it('turns into a section in the other writing mode instead of rolling back', async () => {
+    for (const forward of [true, false]) {
+      const f = fixture();
+      const key = f.renderer.getPageTurnKey!;
+      f.renderer.getPageTurnKey = (delta = 0) => (key(delta) === '1' ? '1' : null);
+      try {
+        const started = await f.controller.turn(forward, true);
+        // Not navigated back to the horizontal page.
+        expect(f.navigate.mock.calls).toEqual([[forward]]);
+        expect(started).toBe(true);
+        const start = f.call.mock.calls.find(([args]) => args.op === 'start')?.[0];
+        expect(start).toMatchObject({ key: '1', forward });
+        const captured = f.call.mock.calls.map(([args]) => args.op === 'capture' && args.key);
+        expect(captured).toContain(start?.destination);
+        expect(start?.destination).not.toBe('1');
+      } finally {
+        f.controller.dispose();
+      }
     }
   });
 

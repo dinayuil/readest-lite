@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+import { bookDataStoreHooks } from '@/__tests__/helpers/book-data-store-mock';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -78,10 +80,10 @@ vi.mock('@/store/readerStore', () => ({
   }),
 }));
 vi.mock('@/store/bookDataStore', () => ({
-  useBookDataStore: () => ({
+  ...bookDataStoreHooks(() => ({
     getConfig: () => ({}),
     getBookData: () => mockBookData,
-  }),
+  })),
 }));
 vi.mock('@/store/settingsStore', () => {
   const useSettingsStore = () => ({
@@ -348,5 +350,44 @@ describe('ViewMenu layout', () => {
       'hr',
     ]);
     expect(seq[autoScroll + 5]).toBe('Sign in to Sync');
+  });
+});
+
+// #7575: in paginated mode Auto Scroll wipes each page in, down horizontal
+// lines and across vertical ones. Fixed-layout books keep it scrolled-only.
+describe('ViewMenu Auto Scroll in paginated mode (#7575)', () => {
+  // A disabled MenuItem drops its menuitem role, so find it by its label.
+  const autoScrollItem = () => screen.getByText('Auto Scroll').closest('button')!;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    currentViewSettings.scrolled = false;
+    currentViewSettings.vertical = false;
+    mockBookData.isFixedLayout = false;
+    mockBookData.bookDoc.rendition = { layout: 'reflowable' };
+  });
+
+  afterEach(() => {
+    cleanup();
+    currentViewSettings.vertical = false;
+    mockBookData.isFixedLayout = true;
+    mockBookData.bookDoc.rendition = { layout: 'pre-paginated' };
+  });
+
+  it('offers Auto Scroll for a paginated horizontal book', () => {
+    render(<ViewMenu bookKey='book-1' />);
+    expect(autoScrollItem().disabled).toBe(false);
+  });
+
+  it('offers Auto Scroll for a paginated vertical book', () => {
+    currentViewSettings.vertical = true;
+    render(<ViewMenu bookKey='book-1' />);
+    expect(autoScrollItem().disabled).toBe(false);
+  });
+
+  it('keeps Auto Scroll scrolled-only for fixed-layout books', () => {
+    mockBookData.isFixedLayout = true;
+    render(<ViewMenu bookKey='book-1' />);
+    expect(autoScrollItem().disabled).toBe(true);
   });
 });

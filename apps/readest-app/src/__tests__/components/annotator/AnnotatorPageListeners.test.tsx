@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
@@ -31,6 +32,8 @@ const settings = {
     highlightStyles: { highlight: 'yellow', underline: 'green', squiggly: 'blue' },
   },
 };
+
+vi.mock('@/context/AuthContext', () => ({ useAuth: () => ({ token: null, user: null }) }));
 
 vi.mock('@/hooks/useShortcuts', () => ({ default: () => {} }));
 

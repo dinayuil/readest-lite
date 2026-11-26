@@ -24,6 +24,7 @@ import { applyVimMotion, extendSelectionFromContents, KeyModifiers } from '@/uti
 import { getLiveVimFind, useVimFindStore } from '@/store/vimFindStore';
 import { getReadingAreaRect, keyboardTurnDirection } from './useAutoPageTurn';
 import { viewPagination } from './usePagination';
+import { applyPageTurnAttributes } from './useCapturedTurn';
 import useShortcuts from '@/hooks/useShortcuts';
 import { loadShortcuts } from '@/helpers/shortcuts';
 import { matchesShortcut } from '@/utils/shortcutKeys';
@@ -42,7 +43,9 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
     useSidebarStore();
   const { settings, setSettingsDialogOpen, setSettingsDialogBookKey } = useSettingsStore();
   const { envConfig } = useEnv();
-  const { getBookData, getConfig, setConfig } = useBookDataStore();
+  const getBookData = useBookDataStore((s) => s.getBookData);
+  const getConfig = useBookDataStore((s) => s.getConfig);
+  const setConfig = useBookDataStore((s) => s.setConfig);
   const { toggleNotebook } = useNotebookStore();
   const { getNextBookKey } = useBooksManager();
   const lastParagraphToggleRef = useRef(0);
@@ -77,7 +80,12 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
       }
       setViewSettings(sideBarBookKey, viewSettings!);
       const flowMode = viewSettings.scrolled ? 'scrolled' : 'paginated';
-      getView(sideBarBookKey)?.renderer.setAttribute('flow', flowMode);
+      const view = getView(sideBarBookKey);
+      view?.renderer.setAttribute('flow', flowMode);
+      // Recompute no-swipe as ViewMenu does: a captured paginated turn's
+      // no-swipe would otherwise block single-section boundary swipes.
+      if (view)
+        applyPageTurnAttributes(view, viewSettings, !!getBookData(sideBarBookKey)?.isFixedLayout);
     }
     return true;
   };
@@ -490,9 +498,8 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
 
   const toggleAutoScroll = () => {
     if (!sideBarBookKey) return;
-    // Auto Scroll only exists in scrolled mode (#4998); the View menu item is
-    // disabled outside it, so the shortcut silently no-ops there too.
-    if (!getViewSettings(sideBarBookKey)?.scrolled) return;
+    // useAutoScroll no-ops where the View menu item is disabled: paginated
+    // vertical and fixed-layout books (#7575).
     eventDispatcher.dispatch('autoscroll-toggle', { bookKey: sideBarBookKey });
   };
 

@@ -16,7 +16,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useEnv } from '@/context/EnvContext';
 import { useThemeStore } from '@/store/themeStore';
 import { useQuotaStats } from '@/hooks/useQuotaStats';
-import { isReadestCloudEnabled } from '@/services/sync/cloudSyncProvider';
+import { useUserActions } from '@/hooks/useUserActions';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -54,6 +54,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
   const { envConfig, appService } = useEnv();
   const { user } = useAuth();
   const { userProfilePlan, quotas } = useQuotaStats(true);
+  const { handleLogout } = useUserActions();
   const { themeMode, setThemeMode } = useThemeStore();
   const { settings, setSettingsDialogOpen } = useSettingsStore();
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(settings.alwaysOnTop);
@@ -123,9 +124,14 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
     setIsDropdownOpen?.(false);
   };
 
-  const handleManageSync = () => {
-    router.push('/user?section=sync');
+  const handleSyncSettings = () => {
+    navigateToProfile(router, 'sync');
     setIsDropdownOpen?.(false);
+  };
+
+  const onLogout = () => {
+    setIsDropdownOpen?.(false);
+    void handleLogout();
   };
 
   const cycleThemeMode = () => {
@@ -271,7 +277,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
   // The sync row reports the health of whatever the user selected. Native
   // cursors freeze while Readest Cloud is off (the book/progress/note channels
   // are gated), so the file engine's timestamps have to stand in.
-  const readestEnabled = isReadestCloudEnabled(settings);
   // Shared with the reader's View menu (#5910) so both surfaces answer "is my
   // sync healthy?" identically. The hook gates the native cursors on whether
   // Readest Cloud is actually enabled and drops backends that cannot run right
@@ -345,7 +350,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
                       })
               }
             />
-            {readestEnabled ? (
+            {quotas.length > 0 && (
               <button
                 onClick={handleUserProfile}
                 className='hover:bg-base-300 w-full rounded-md'
@@ -353,10 +358,12 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
                   paddingInlineStart: `${iconSize}px`,
                 }}
               >
-                <Quota quotas={quotas} labelClassName='h-10 pl-3 pr-2' />
+                <Quota quotas={quotas} labelClassName='h-10 ps-3 pe-2' />
               </button>
-            ) : null}
+            )}
             <MenuItem label={_('Account')} onClick={handleUserProfile} />
+            <MenuItem label={_('Sign Out')} onClick={onLogout} />
+            <MenuItem label={_('Sync Settings')} onClick={handleSyncSettings} />
           </ul>
         </MenuItem>
       ) : (
@@ -429,7 +436,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
           {appService?.canCustomizeRootDir && (
             <MenuItem label={_('Change Data Location')} onClick={handleSetRootDir} />
           )}
-          {user && <MenuItem label={_('Data Sync')} onClick={handleManageSync} />}
           <MenuItem
             label={_('Refresh Metadata')}
             description={refreshMetadataProgress}

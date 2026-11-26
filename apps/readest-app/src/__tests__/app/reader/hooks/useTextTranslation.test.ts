@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import {
@@ -9,6 +10,8 @@ import {
   setSourceVisibility,
   useTextTranslation,
 } from '@/app/reader/hooks/useTextTranslation';
+import { sanitizeTranslatedMarkup } from '@/app/reader/utils/translationMarkup';
+import { getWordRangeAt } from '@/utils/sel';
 import { walkTextNodes } from '@/utils/walk';
 
 const translate = vi.hoisted(() => vi.fn(async (texts: string[]) => texts.map(() => '我读汉字。')));
@@ -282,6 +285,21 @@ describe('createTranslationTargetNode', () => {
     expect(wrapper.querySelector('b')?.textContent).toBe('敏捷');
   });
 
+  it('keeps a word whose tags the sanitizer unwrapped in one text node', () => {
+    const content = sanitizeTranslatedMarkup('Captain Ne<div>mo</div> smiled.', new Set());
+    const wrapper = createTranslationTargetNode({
+      content: content!,
+      lang: 'en',
+      targetBlockClassName: 'translation-target-block',
+      hidden: false,
+      widthLineBreak: false,
+    });
+
+    // A long-press or double-tap on "Ne" selects the word under it.
+    const text = wrapper.firstChild!;
+    expect(getWordRangeAt(text, text.textContent!.indexOf('Ne'))?.toString()).toBe('Nemo');
+  });
+
   it('marks the wrapper hidden when hidden is true', () => {
     const wrapper = createTranslationTargetNode({
       translatedText: 'مرحبا',
@@ -381,6 +399,69 @@ describe('useTextTranslation', () => {
 
     view.remove();
     vi.unstubAllGlobals();
+  });
+
+  it.each([
+    { intersectDuringReset: false },
+    { intersectDuringReset: true },
+  ])('discards a previous language after a reset ($intersectDuringReset)', async ({
+    intersectDuringReset,
+  }) => {
+    const getViewSettings = readerState.getViewSettings;
+    let settings = { ...viewSettings, translateTargetLang: 'fr' };
+    readerState.getViewSettings = () => settings;
+    let resolveFrench!: (texts: string[]) => void;
+    let resolveSpanish!: (texts: string[]) => void;
+    translate
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveFrench = resolve)))
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveSpanish = resolve)));
+
+    let onIntersect!: IntersectionObserverCallback;
+    let observerCount = 0;
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          onIntersect = callback;
+          observerCount++;
+        }
+        observe() {
+          if (intersectDuringReset && observerCount === 2) showParagraph();
+        }
+        disconnect() {}
+      },
+    );
+    const view = document.createElement('div');
+    view.innerHTML = '<p>Source paragraph.</p>';
+    const paragraph = view.querySelector('p')!;
+    const showParagraph = () =>
+      onIntersect(
+        [{ isIntersecting: true, target: paragraph } as unknown as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
+
+    try {
+      vi.useFakeTimers();
+      const { rerender } = renderHook(() => useTextTranslation('book-1', view));
+      showParagraph();
+      settings = { ...settings, translateTargetLang: 'es' };
+      rerender();
+      if (!intersectDuringReset) showParagraph();
+
+      resolveFrench(['Paragraphe traduit.']);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(paragraph.querySelector('.translation-target')).toBeNull();
+
+      resolveSpanish(['Párrafo traducido.']);
+      await vi.advanceTimersByTimeAsync(50);
+      const target = paragraph.querySelector('.translation-target');
+      expect(target?.textContent).toBe('Párrafo traducido.');
+      expect(target?.getAttribute('lang')).toBe('es');
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      readerState.getViewSettings = getViewSettings;
+    }
   });
 
   it('cancels a queued batch on unmount when translation was enabled after mount', async () => {

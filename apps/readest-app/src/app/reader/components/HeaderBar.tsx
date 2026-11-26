@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { PiScribbleLoop } from 'react-icons/pi';
 import { VscLibrary } from 'react-icons/vsc';
 import { MdOutlineMenu } from 'react-icons/md';
 
@@ -7,7 +8,7 @@ import { Insets } from '@/types/misc';
 import { useEnv } from '@/context/EnvContext';
 import { useThemeStore } from '@/store/themeStore';
 import { useReaderStore } from '@/store/readerStore';
-import { useBookDataStore } from '@/store/bookDataStore';
+import { useBookData, useBookDataStore } from '@/store/bookDataStore';
 import { useSidebarStore } from '@/store/sidebarStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -22,8 +23,10 @@ import { AnnotationToolType } from '@/types/annotator';
 import { saveViewSettings } from '@/helpers/settings';
 import { getHeaderTriggerHeight, getHorizontalInsetStyle } from '@/utils/insets';
 import { getBookDataAttributes } from '@/utils/book';
+import { eventDispatcher } from '@/utils/event';
 import { isForcedMobileLayout } from '../utils/mobileLayout';
 import { HighlighterIcon } from '@/components/HighlighterIcon';
+import Button from '@/components/Button';
 import Dropdown from '@/components/Dropdown';
 import ModalPortal from '@/components/ModalPortal';
 import WindowButtons from '@/components/WindowButtons';
@@ -69,21 +72,24 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   const { isDarkMode, systemUIVisible, statusBarHeight, isIPhoneDuo } = useThemeStore();
   const { isSideBarVisible, getIsSideBarVisible } = useSidebarStore();
   const { getView, getViewSettings, setHoveredBookKey } = useReaderStore();
-  const { getBookData, getConfig } = useBookDataStore();
   const viewSettings = getViewSettings(bookKey);
-  const bookData = getBookData(bookKey);
-  const bookConfig = getConfig(bookKey);
+  const bookData = useBookData(bookKey);
   // Readest Cloud's per-book stamps. Includes the PUSH stamps so this agrees
   // with the View menu's sync row, which has always counted them — otherwise
   // the row could read "Synced 2 minutes ago" while this dialog said "Never
-  // synced" for the same book.
-  const nativeLastSyncedAt =
-    Math.max(
-      bookConfig?.lastSyncedAtConfig || 0,
-      bookConfig?.lastSyncedAtNotes || 0,
-      bookConfig?.lastPushedAtConfig || 0,
-      bookConfig?.lastPushedAtNotes || 0,
-    ) || undefined;
+  // synced" for the same book. Selected as one number: the config itself
+  // changes on every progress save (updatedAt), which the header doesn't show.
+  const nativeLastSyncedAt = useBookDataStore((s) => {
+    const bookConfig = s.getConfig(bookKey);
+    return (
+      Math.max(
+        bookConfig?.lastSyncedAtConfig || 0,
+        bookConfig?.lastSyncedAtNotes || 0,
+        bookConfig?.lastPushedAtConfig || 0,
+        bookConfig?.lastPushedAtNotes || 0,
+      ) || undefined
+    );
+  });
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isMetaHashDialogOpen, setIsMetaHashDialogOpen] = useState(false);
@@ -234,8 +240,12 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         role='banner'
         aria-label={_('Header Bar')}
         className={clsx(
-          `header-bar bg-base-100 absolute top-0 z-10 flex h-11 w-full items-center pr-4`,
-          `shadow-xs transition-[opacity,margin-top] duration-300`,
+          `header-bar bg-base-100 absolute top-0 flex h-11 w-full items-center pr-4`,
+          // The desktop wrapper has no z-index, so at z-10 the open menu ties
+          // with the page chrome rendered later (the footer's tap strip) and
+          // loses where they overlap (#7966).
+          isDropdownOpen ? 'z-20' : 'z-10',
+          `shadow-xs eink:border-b eink:border-base-content transition-[opacity,margin-top] duration-300`,
           trafficLightInHeader ? 'pl-20' : isSideBarVisible ? 'ps-4' : 'ps-4 sm:ps-1.5',
           appService?.hasRoundedWindow && 'rounded-window-top-right',
           !isSideBarVisible && appService?.hasRoundedWindow && 'rounded-window-top-left',
@@ -351,6 +361,11 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         </div>
 
         <div className='header-tools-end bg-base-100 z-20 ms-auto flex h-full min-w-max items-center gap-x-4 ps-2 max-[350px]:gap-x-2'>
+          <Button
+            icon={<PiScribbleLoop size={iconSize18} />}
+            label={_('Instant {{action}}', { action: _('Draw') })}
+            onClick={() => eventDispatcher.dispatch('handwriting', { action: 'toggle', bookKey })}
+          />
           <NotebookToggler bookKey={bookKey} />
           <Dropdown
             label={_('View Options')}
@@ -394,4 +409,6 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   );
 };
 
-export default HeaderBar;
+// Memoized: its props hold still while pages turn, so a turn's re-render of the
+// book cell skips the header and its buttons.
+export default React.memo(HeaderBar);

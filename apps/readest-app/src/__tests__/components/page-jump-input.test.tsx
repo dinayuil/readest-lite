@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+import { bookDataStoreHooks } from '@/__tests__/helpers/book-data-store-mock';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/react';
 import PageJumpInput from '@/app/reader/components/footerbar/PageJumpInput';
@@ -24,19 +26,22 @@ vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => (s: string) => s,
 }));
 
+vi.mock('@/store/readerProgressStore', () => ({
+  useBookProgress: () => mocks.state.progress,
+}));
+
 vi.mock('@/store/readerStore', () => ({
   useReaderStore: () => ({
     hoveredBookKey: mocks.state.hoveredBookKey,
     getView: () => mocks.view,
-    getProgress: () => mocks.state.progress,
     getViewSettings: () => mocks.state.viewSettings,
   }),
 }));
 
 vi.mock('@/store/bookDataStore', () => ({
-  useBookDataStore: () => ({
+  ...bookDataStoreHooks(() => ({
     getBookData: () => mocks.state.bookData,
-  }),
+  })),
 }));
 
 const setup = ({
@@ -90,6 +95,20 @@ beforeEach(() => {
 });
 
 afterEach(() => cleanup());
+
+// A typed page is a jump the reader asked for: it goes through goTo with focus,
+// so the reader can come back from it (#8004).
+const jumpedFraction = () => {
+  expect(mocks.view.goToFraction).not.toHaveBeenCalled();
+  expect(mocks.view.goTo).toHaveBeenCalledTimes(1);
+  const [target, options] = mocks.view.goTo.mock.calls[0]!;
+  expect(options).toEqual({ focus: true });
+  return (target as { fraction: number }).fraction;
+};
+const expectNoJump = () => {
+  expect(mocks.view.goTo).not.toHaveBeenCalled();
+  expect(mocks.view.goToFraction).not.toHaveBeenCalled();
+};
 
 describe('PageJumpInput', () => {
   it('shows the page fraction as its idle label', () => {
@@ -154,8 +173,7 @@ describe('PageJumpInput', () => {
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: '120 / 251' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(mocks.view.goToFraction).toHaveBeenCalledTimes(1);
-    expect(mocks.view.goToFraction.mock.calls[0]![0]).toBeCloseTo(119.5 / 251);
+    expect(jumpedFraction()).toBeCloseTo(119.5 / 251);
     expect(input.value).toBe('94 / 251');
   });
 
@@ -164,7 +182,7 @@ describe('PageJumpInput', () => {
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: '120' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(mocks.view.goToFraction.mock.calls[0]![0]).toBeCloseTo(119.5 / 251);
+    expect(jumpedFraction()).toBeCloseTo(119.5 / 251);
   });
 
   it('jumps when the field loses focus after an edit (no Enter key on iOS number pads)', () => {
@@ -172,8 +190,7 @@ describe('PageJumpInput', () => {
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: '120 / 251' } });
     fireEvent.blur(input);
-    expect(mocks.view.goToFraction).toHaveBeenCalledTimes(1);
-    expect(mocks.view.goToFraction.mock.calls[0]![0]).toBeCloseTo(119.5 / 251);
+    expect(jumpedFraction()).toBeCloseTo(119.5 / 251);
     expect(input.value).toBe('94 / 251');
   });
 
@@ -181,7 +198,7 @@ describe('PageJumpInput', () => {
     const { input } = setup();
     fireEvent.focus(input);
     fireEvent.blur(input);
-    expect(mocks.view.goToFraction).not.toHaveBeenCalled();
+    expectNoJump();
   });
 
   it('does not jump when the footer bar hides mid-edit', () => {
@@ -192,7 +209,7 @@ describe('PageJumpInput', () => {
     mocks.state.hoveredBookKey = '';
     rerender(<PageJumpInput bookKey='book1' />);
     expect(document.activeElement).not.toBe(input);
-    expect(mocks.view.goToFraction).not.toHaveBeenCalled();
+    expectNoJump();
   });
 
   it('clamps out-of-range pages to the last page', () => {
@@ -200,7 +217,7 @@ describe('PageJumpInput', () => {
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: '9999 / 251' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(mocks.view.goToFraction.mock.calls[0]![0]).toBeCloseTo(250.5 / 251);
+    expect(jumpedFraction()).toBeCloseTo(250.5 / 251);
   });
 
   it('ignores non-numeric input', () => {
@@ -208,8 +225,7 @@ describe('PageJumpInput', () => {
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: 'abc / 251' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(mocks.view.goToFraction).not.toHaveBeenCalled();
-    expect(mocks.view.goTo).not.toHaveBeenCalled();
+    expectNoJump();
     expect(input.value).toBe('94 / 251');
   });
 
@@ -218,7 +234,7 @@ describe('PageJumpInput', () => {
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: '200 / 251' } });
     fireEvent.keyDown(input, { key: 'Escape' });
-    expect(mocks.view.goToFraction).not.toHaveBeenCalled();
+    expectNoJump();
     expect(input.value).toBe('94 / 251');
   });
 
@@ -228,7 +244,7 @@ describe('PageJumpInput', () => {
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: '10 / 30' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(mocks.view.goTo).toHaveBeenCalledWith(9);
+    expect(mocks.view.goTo).toHaveBeenCalledWith(9, { focus: true });
     expect(mocks.view.goToFraction).not.toHaveBeenCalled();
   });
 
@@ -243,7 +259,7 @@ describe('PageJumpInput', () => {
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: '2 / 2' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(mocks.view.goTo).toHaveBeenCalledWith('ch01.html#p2');
+    expect(mocks.view.goTo).toHaveBeenCalledWith('ch01.html#p2', { focus: true });
     expect(mocks.view.goToFraction).not.toHaveBeenCalled();
   });
 

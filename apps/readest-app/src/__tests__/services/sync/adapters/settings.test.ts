@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, test } from 'vitest';
 import {
   SETTINGS_DICTIONARY_FIELDS,
@@ -331,6 +332,7 @@ describe('settingsAdapter', () => {
       'bookorbit.username',
       'bookorbit.userkey',
       'bookorbit.password',
+      'bookorbit.apiKey',
       'bookorbit.customHeaders',
       'grimmory.username',
       'grimmory.password',

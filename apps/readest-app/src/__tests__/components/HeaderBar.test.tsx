@@ -1,7 +1,10 @@
+// @vitest-environment happy-dom
+import { bookDataStoreHooks } from '@/__tests__/helpers/book-data-store-mock';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import HeaderBar from '@/app/reader/components/HeaderBar';
+import { eventDispatcher } from '@/utils/event';
 
 // jsdom ships no ResizeObserver, and HeaderBar constructs one to track its own
 // width. Same stub pattern as popup-resting-triangle.test.
@@ -12,7 +15,8 @@ class MockResizeObserver {
 }
 
 vi.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => (key: string) => key,
+  useTranslation: () => (key: string, params?: Record<string, string>) =>
+    key.replace(/\{\{(\w+)\}\}/g, (_match, name: string) => params?.[name] ?? ''),
 }));
 
 const useEnvMock = vi.fn();
@@ -51,7 +55,7 @@ let currentBookData: {
   book?: { title: string; metadata?: { series?: string; seriesIndex?: number } };
 } | null = null;
 vi.mock('@/store/bookDataStore', () => ({
-  useBookDataStore: () => ({ getBookData: () => currentBookData, getConfig: () => null }),
+  ...bookDataStoreHooks(() => ({ getBookData: () => currentBookData, getConfig: () => null })),
 }));
 vi.mock('@/store/trafficLightStore', () => ({
   useTrafficLightStore: () => ({
@@ -117,6 +121,18 @@ afterEach(() => {
   setHoveredBookKey.mockReset();
   currentBookData = null;
   isIPhoneDuo = false;
+});
+
+it('starts Instant Draw directly from the toolbar when Quick Actions are disabled', () => {
+  setViewport(834, 1194);
+  const dispatch = vi.spyOn(eventDispatcher, 'dispatch');
+  try {
+    renderHeader();
+    fireEvent.click(screen.getByRole('button', { name: 'Instant Draw' }));
+    expect(dispatch).toHaveBeenCalledWith('handwriting', { action: 'toggle', bookKey: 'book-1' });
+  } finally {
+    dispatch.mockRestore();
+  }
 });
 
 describe('HeaderBar sidebar toggle', () => {

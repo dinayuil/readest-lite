@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+import { bookDataStoreHooks } from '@/__tests__/helpers/book-data-store-mock';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
 
@@ -35,7 +37,7 @@ vi.mock('@/store/readerStore', () => ({
   ),
 }));
 vi.mock('@/store/bookDataStore', () => ({
-  useBookDataStore: () => ({ getBookData: () => ({}) }),
+  ...bookDataStoreHooks(() => ({ getBookData: () => ({}) })),
 }));
 vi.mock('@/store/settingsStore', () => ({
   useSettingsStore: Object.assign(
@@ -210,6 +212,39 @@ describe('usePagination volume keys with reader controls (#7246)', () => {
       expect(next).not.toHaveBeenCalled();
     } finally {
       eventDispatcher.off('paragraph-next', next);
+    }
+  });
+
+  test('steps paragraphs while the Paragraph Mode overlay is open, not a menu over it (#7227)', async () => {
+    h.viewSettings = { volumeKeysToFlip: true, paragraphMode: { enabled: true } };
+    const next = vi.fn();
+    eventDispatcher.on('paragraph-next', next);
+    // The overlay's root as ParagraphOverlay renders it; paragraph-mode.test.tsx
+    // checks the real component against the same overlay detection.
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('data-reading-surface', 'paragraph');
+    const menu = document.createElement('button');
+    menu.setAttribute('aria-haspopup', 'menu');
+    menu.setAttribute('aria-expanded', 'false');
+    overlay.append(menu);
+    try {
+      document.body.append(overlay);
+      const view = makeView();
+      setupWithView(view);
+      expect(useDeviceControlStore.getState().volumeKeysIntercepted).toBe(true);
+      await pressVolumeKey('VolumeDown');
+      expect(next).toHaveBeenCalledOnce();
+      expect(view.next).not.toHaveBeenCalled();
+
+      await act(async () => menu.setAttribute('aria-expanded', 'true'));
+      expect(useDeviceControlStore.getState().volumeKeysIntercepted).toBe(false);
+      await pressVolumeKey('VolumeDown');
+      expect(next).toHaveBeenCalledOnce();
+    } finally {
+      eventDispatcher.off('paragraph-next', next);
+      overlay.remove();
     }
   });
 
@@ -429,5 +464,29 @@ describe('usePagination volume-key interception with TTS (#4691)', () => {
     await pressVolumeKey('VolumeUp');
 
     expect(view.prev).toHaveBeenCalled();
+  });
+
+  test('drops held volume-key repeat events while a turn is still in flight', async () => {
+    let resolveTurn!: () => void;
+    const view = makeView();
+    view.next.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveTurn = resolve;
+        }),
+    );
+    setupWithView(view);
+
+    await pressVolumeKey('VolumeDown');
+    await pressVolumeKey('VolumeDown');
+    await pressVolumeKey('VolumeDown');
+    expect(view.next).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      resolveTurn();
+    });
+
+    await pressVolumeKey('VolumeDown');
+    expect(view.next).toHaveBeenCalledTimes(2);
   });
 });

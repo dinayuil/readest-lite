@@ -6,7 +6,7 @@
 > 不要再新建 `TODO`、`PROGRESS`、`NOTES` 之类的平行文件；所有进度、待办、
 > 合并记录都写在这里。
 
-最后更新：2026-11-14
+最后更新：2026-11-26
 
 ## 当前状态
 
@@ -14,9 +14,9 @@
 | --- | --- |
 | 分支 | `lite` |
 | 应用名称 | `Readest lite`；仓库 `dinayuil/readest-lite` |
-| 当前基线 | 官方 `v0.12.20`（`28aab23e0`，2026-11-05 发布） |
-| 合并提交 | `dbfcad035` — `Merge tag 'v0.12.20' into lite` |
-| 版本号 | `apps/readest-app/package.json` = `0.12.20` |
+| 当前基线 | 官方 `v0.12.26`（`cefdc9edd`，2026-11-26 发布） |
+| 合并提交 | `Merge tag 'v0.12.26' into lite` |
+| 版本号 | `apps/readest-app/package.json` = `0.12.26` |
 | fork 开关 | `ACCOUNTLESS_BUILD = true`（`apps/readest-app/src/utils/access.ts`） |
 | 远端 | `origin` = `dinayuil/readest-lite`；`upstream` = `readest/readest` |
 | 客户端构建 | `.github/workflows/fork-build.yml`，Windows + Android，**每次 push 触发**；两个 job 都成功后自动创建 GitHub Release；Android 签名 secrets 已配置（2026-09-19） |
@@ -28,8 +28,7 @@
 grep -rn ACCOUNTLESS_BUILD apps/readest-app/src
 ```
 
-当前命中 **33 个文件（含 10 个测试文件）、约 92 处**（以实际 grep 结果为准）。
-改完或合并后按这个列表逐处复核即可。
+改完或合并后按搜索结果逐处复核。
 
 ## 应用与仓库改名（2026-11-12）
 
@@ -57,7 +56,14 @@ grep -rn ACCOUNTLESS_BUILD apps/readest-app/src
 - 增加 `README.en.md`，与中文 `README.md` 互相链接；GitHub Description 同时
   提供中英文简介。两份 README 均只介绍产品与用法，不另建进度记录。
 
-## 本轮合并记录：v0.12.20
+## 本轮合并记录：v0.12.26
+
+- 合并官方正式发布标签 `v0.12.26`（`cefdc9edd`），包含上游 321 个提交并解决 8 个文件冲突。
+- 保留免登录书籍上传和第三方同步入口。第三方同步设置同时保留 fork 阅读统计和上游缓存选项。
+- 在现有统计数据库中保留文件分块同步迁移，追加上游阅读速度迁移。阅读速度记录、统计合并和删除复用同一写入队列。
+- `foliate-js` 更新至 `4282f94c6`，`tauri-plugin-webview-upgrade` 更新至 `5b8b8c88f`。根目录 `pnpm install --frozen-lockfile` 通过。
+
+## 历史合并记录：v0.12.20
 
 - `lite` 与 `v0.12.20` 之间原有 **513 个上游提交**，`git diff` 约 1366 个文件。
 - 合并产生 **14 个冲突**：13 个内容冲突 + 1 个上游删除的测试文件

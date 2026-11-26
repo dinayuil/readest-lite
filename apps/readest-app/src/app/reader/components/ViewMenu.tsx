@@ -28,7 +28,7 @@ import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
 import { useThemeStore } from '@/store/themeStore';
 import { useReaderStore } from '@/store/readerStore';
-import { useBookDataStore } from '@/store/bookDataStore';
+import { useBookConfig, useBookData } from '@/store/bookDataStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useCloudSyncStatus } from '@/hooks/useCloudSyncStatus';
@@ -62,12 +62,11 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
   const router = useRouter();
   const { user } = useAuth();
   const { envConfig, appService } = useEnv();
-  const { getConfig, getBookData } = useBookDataStore();
   const { setSettingsDialogOpen, setSettingsDialogBookKey } = useSettingsStore();
   const { getView, getViewSettings, getViewState, getProgress, setViewSettings, recreateViewer } =
     useReaderStore();
-  const config = getConfig(bookKey)!;
-  const bookData = getBookData(bookKey)!;
+  const config = useBookConfig(bookKey)!;
+  const bookData = useBookData(bookKey)!;
   const viewSettings = getViewSettings(bookKey)!;
   const viewState = getViewState(bookKey);
 
@@ -539,7 +538,8 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
         shortcut='Shift+A'
         Icon={viewState?.autoScrollEnabled ? MdCheck : undefined}
         onClick={toggleAutoScroll}
-        disabled={!isScrolledMode}
+        // Paginated reflowable pages are wiped in (#7575).
+        disabled={!isScrolledMode && bookData.isFixedLayout}
       />
 
       {bookData.book?.format === 'PDF' && appService?.supportsCanvasContext2DFilter && (
